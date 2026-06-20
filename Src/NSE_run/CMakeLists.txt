@@ -7,7 +7,7 @@ add_executable(nserun
                 IOManager.H)
 
 # uncomment below line for gpu compilation
-# setup_target_for_cuda_compilation(nserun)
+setup_target_for_cuda_compilation(nserun)
 
 find_package(OpenMP REQUIRED)
 target_link_libraries(nserun PRIVATE OpenMP::OpenMP_CXX)

@@ -24,8 +24,7 @@ struct SimConfig
     amrex::Real Re;
     amrex::Real source_tag_thresh;
 
-    // FMM parameters
-    int n_chebyshev;
+    // LGF kernel parameters
     int n_lookup;
 
     // IO parameters
@@ -70,7 +69,6 @@ struct SimConfig
         pp.get("Re", Re);
         pp.get("tagging_threshold", source_tag_thresh);
 
-        pp.get("n_chebyshev", n_chebyshev);
         pp.get("n_lookup", n_lookup);
 
         pp.query("write_plot", write_plot);

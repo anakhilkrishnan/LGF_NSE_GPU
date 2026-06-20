@@ -7,7 +7,7 @@ add_library(NSE_core_lib STATIC
                 RKCoefficients.H
                 SpatialDiscretization.H)
                 
-# setup_target_for_cuda_compilation(NSE_core_lib)
+setup_target_for_cuda_compilation(NSE_core_lib)
 
 # Tell CMake where the headers (like LGFCore.H) are
 target_include_directories(NSE_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

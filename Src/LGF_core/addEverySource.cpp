@@ -2,7 +2,7 @@
 
 using namespace amrex;
 
-void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr) 
+void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr, int n_lookup) 
 {
     // adding profiling blocks for Tiny/Base profilers
     BL_PROFILE("<Compute> addEverySourceBox()");
@@ -91,8 +91,10 @@ void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, c
                             amrex::Real x_src = prob_lo[0] + ((si + 0.5) * block.dx[0]);
                             
                             // compute the LGF kernel for the current source-target cell pair
-                            amrex::Real lgf = computeLGF(AMREX_D_DECL(x_tar, y_tar, z_tar),
-                                                            AMREX_D_DECL(x_src, y_src, z_src), block.dx[0]);
+                            amrex::Real lgf = computeLGF(n_lookup, 
+                                                        AMREX_D_DECL(x_tar, y_tar, z_tar),
+                                                        AMREX_D_DECL(x_src, y_src, z_src),
+                                                        AMREX_D_DECL(block.dx[0], block.dx[1], block.dx[2]));
                                                             
                             
                             

@@ -69,7 +69,7 @@ void extendedMain()
         initializeVelField(state_n);
 
         // populating pressure based on divergence of Navier-Stokes at initial conditions
-        workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh, cfg.n_chebyshev, cfg.n_lookup);
+        workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh, cfg.n_lookup);
 
         // populating KE comp arrays
         auto init_kecomp_dir = computeKEFromState(state_n);
@@ -119,7 +119,7 @@ void extendedMain()
 
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, dt, cfg.Re, cfg.rk_order, cfg.source_tag_thresh, cfg.n_chebyshev, cfg.n_lookup);
+        workspace.advanceTimeStep(state_n, dt, cfg.Re, cfg.rk_order, cfg.source_tag_thresh, cfg.n_lookup);
 
         // update counters
         time += dt;

@@ -16,7 +16,6 @@ cfl = 0.5
 Re = 30000
 tagging_threshold = 0.0
 
-n_chebyshev = 16
 n_lookup = 32
 
 write_plot = true

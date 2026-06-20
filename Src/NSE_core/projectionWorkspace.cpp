@@ -73,7 +73,7 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state, amrex::Real c
     return amrex::min(dt_adv, dt_diff);
 }
 
-void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh, int nChebyshev, int nLookup)
+void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh, int nLookup)
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
@@ -105,7 +105,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
 
     // solving the poisson equation to get correct pressure initial conditions
     amrex::Vector<int> init_tag_region = tagSource(init_state.getDivU(), source_tag_thresh);
-    solveFMM(init_state.getDivU(), init_state.getPres(), geom, nChebyshev, nLookup);
+    addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, init_tag_region, nLookup);
 
     // export tagged cells used for pressure computation
     for (MFIter mfi(init_state.getTagRegion()); mfi.isValid(); ++mfi) 
@@ -314,7 +314,7 @@ void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& s
     stage.setBoundary();
 }
 
-void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh, amrex::Vector<int>& box_tag_arr, int nChebyshev, int nLookup)
+void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh, amrex::Vector<int>& box_tag_arr, int nLookup)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
@@ -346,9 +346,8 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
     // write out divU_max_norm
     divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
-    // performing addition of box values addEverySourceBox(stage.getDivU(), corr_pres, geom, box_tag_arr); 
-    // using FMM based solver instead
-    solveFMM(stage.getDivU(), corr_pres, geom, nChebyshev, nLookup);
+    // performing addition of box values 
+    addEverySourceBox(stage.getDivU(), corr_pres, geom, box_tag_arr, nLookup); 
 
     corr_pres.FillBoundary(geom.periodicity());
 }
@@ -435,7 +434,7 @@ void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Re
     }
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh, int n_chebyshev, int n_lookup)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh, int n_lookup)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -472,7 +471,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         // find divergence of predicted velocity, store in workspace use custom
         // LGF solver to find pressure correction delta update pressure stored
         // in stage
-        computePressure(stage, source_tag_thresh, tag_region, n_chebyshev, n_lookup);
+        computePressure(stage, source_tag_thresh, tag_region, n_lookup);
 
         // use pressure to compute velocity correction store correction in
         // workspace
