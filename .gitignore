@@ -1,0 +1,19 @@
+# IDE & OS Specific Files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# CMake Build Directories (Root Level)
+# Ignore build/, buildgpu/, build_cpu/, etc. at the project root
+build*/
+Build*/
+nsebuild*/
+nseBuild*/
+NSEbuild*/
+NSEBuild*/
+out/
+
+# Ignore complete Exec directory, have it local for each machine
+/Exec/*
+
