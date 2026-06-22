@@ -13,12 +13,14 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
         rhs_vel_corr[idim].define(ba_face, dm, n_comp, n_ghost);
 
         rhs_kecomp[idim].define(ba_face, dm, n_comp, n_ghost);
+        kecomp_dir[idim].define(ba_face, dm, n_comp, n_ghost);
 
         // initialize velocities upon creation
         rhs_vel[idim].setVal(0.0);
         rhs_vel_corr[idim].setVal(0.0);
 
         rhs_kecomp[idim].setVal(0.0);
+        kecomp_dir[idim].setVal(0.0);
 
         // initialize global ke component storage variables
         global_kecomp[idim] = 0.0;
@@ -104,7 +106,8 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     }
 
     // solving the poisson equation to get correct pressure initial conditions
-    amrex::Vector<int> init_tag_region = tagSource(init_state.getDivU(), source_tag_thresh);
+    // force solver to tag all cells by providing source_tag_thresh = 0.0
+    amrex::Vector<int> init_tag_region = tagSource(init_state.getDivU(), 0.0);
     addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, init_tag_region, nLookup);
 
     // export tagged cells used for pressure computation
@@ -225,13 +228,42 @@ void ProjectionWorkspace::evolveKE(const FlowField& state_n, FlowField& stage, a
     }
 }
 
+void ProjectionWorkspace::computeKEFromState(const FlowField& state)
+{
+    BL_PROFILE("computeKEFromState()");
+    // compute face-centered component-wise KE from velocity field in state
+
+    // computing kecomp_dir one component at a time
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        // capture the idim'th velocity component
+        const amrex::MultiFab& vel_comp = state.getVel(idim);
+
+        // initializing to zero to clear garbage values out
+        kecomp_dir[idim].setVal(0.0);
+
+        for (amrex::MFIter mfi(kecomp_dir[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        {
+            const amrex::Box& bx = mfi.tilebox();
+
+            auto const& ke_arr = kecomp_dir[idim].array(mfi);
+            auto const& vel_arr = vel_comp.const_array(mfi);
+
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                ke_arr(i,j,k) = 0.5 * (vel_arr(i,j,k) * vel_arr(i,j,k));
+            });
+        }
+    }
+}
+
 void ProjectionWorkspace::compareKE(const FlowField& state_n)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): compareKE()");
     // compute KE components directly from velocity fields; global reduce both
     // KE and KEdir into component-wise sums and compare/writeout/print
 
-    auto kecomp_dir = computeKEFromState(state_n);
+    computeKEFromState(state_n);
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
@@ -565,40 +597,4 @@ amrex::MultiFab computeCellCenteredVorticity(const FlowField& state)
     }
 
     return vort;
-}
-
-amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> computeKEFromState(const FlowField& state)
-{
-
-    BL_PROFILE("computeKEFromState()");
-    // compute face-centered component-wise KE from velocity field in state
-
-    // computing kecomp_dir one component at a time
-    amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> ke;
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        // capture the idim'th velocity component
-        const amrex::MultiFab& vel_comp = state.getVel(idim);
-
-        // define the KE component using the velocity's exact staggering and layout
-        ke[idim].define(vel_comp.boxArray(), vel_comp.DistributionMap(), vel_comp.nComp(), vel_comp.nGrow());
-
-        // initializing to zero to clear garbage values out
-        ke[idim].setVal(0.0);
-
-        for (amrex::MFIter mfi(ke[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-        {
-            const amrex::Box& bx = mfi.tilebox();
-
-            auto const& ke_arr = ke[idim].array(mfi);
-            auto const& vel_arr = vel_comp.const_array(mfi);
-
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                ke_arr(i,j,k) = 0.5 * (vel_arr(i,j,k) * vel_arr(i,j,k));
-            });
-        }
-    }
-
-    return ke;
 }

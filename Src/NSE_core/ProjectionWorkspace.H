@@ -35,6 +35,8 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
         
     public: 
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
+
         amrex::Real divU_max_norm;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
@@ -47,6 +49,7 @@ class ProjectionWorkspace
 
         void computeKECompFluxes(const FlowField& stage, amrex::Real Re);
         void evolveKE(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
+        void computeKEFromState(const FlowField& state);
         void compareKE(const FlowField& state_n);
 
         void computeMomentumFluxes(const FlowField& stage, amrex::Real Re);

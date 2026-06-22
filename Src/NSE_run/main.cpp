@@ -72,10 +72,10 @@ void extendedMain()
         workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh, cfg.n_lookup);
 
         // populating KE comp arrays
-        auto init_kecomp_dir = computeKEFromState(state_n);
+        workspace.computeKEFromState(state_n);
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
         {
-            amrex::MultiFab::Copy(state_n.getKEComp(idim), init_kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
+            amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
         }
 
         time = cfg.t_start;
