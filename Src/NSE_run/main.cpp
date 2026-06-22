@@ -62,11 +62,17 @@ void extendedMain()
     if (cfg.start_from_chk)
     {
         io.initializeFlowFieldFromChk(state_n);
+
+        // fill ghost cells and apply physical BCs
+        state_n.setBoundary();
     }
     else 
     {
         // starting from initial conditions
         initializeVelField(state_n);
+
+        // fill ghost cells and apply physical BCs
+        state_n.setBoundary();
 
         // populating pressure based on divergence of Navier-Stokes at initial conditions
         workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh, cfg.n_lookup);
@@ -78,12 +84,12 @@ void extendedMain()
             amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
         }
 
+        // fill ghost cells and apply physical BCs
+        state_n.setBoundary();
+
         time = cfg.t_start;
         step = 0;
     }
-    
-    // fill ghost cells and apply physical BCs
-    state_n.setBoundary();
     
     // plotting initial conditions
     if (cfg.write_plot && step == 0)
