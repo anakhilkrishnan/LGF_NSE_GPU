@@ -79,6 +79,8 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
+    // set value to 0.0 and store fresh
+    init_state.getDivU().setVal(0.0);
     init_state.getPres().setVal(0.0);
 
     computeMomentumFluxes(init_state, Re);
@@ -124,9 +126,6 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
             init_state.getTagRegion()[mfi].setVal<RunOn::Device>(0.0); 
         }
     }
-
-    // return divU to undisturbed state
-    init_state.getDivU().setVal(0.0);
 
     // compute divU_at_end
     for(amrex::MFIter mfi(init_state.getDivUAtEnd(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
@@ -353,6 +352,9 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
     // extracting physical dx for computations
     const amrex::Geometry& geom = stage.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+
+    // set divU to 0.0 and store fresh data
+    stage.getDivU().setVal(0.0);
 
     // compute divU and store in stage
     for(amrex::MFIter mfi(stage.getDivU(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)

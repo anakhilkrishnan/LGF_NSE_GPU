@@ -31,7 +31,7 @@ struct ConsolidatedData
 // defining key functions within LGFcore
 ConsolidatedData consolidateMultiFab(const amrex::MultiFab& phifab, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr);
 void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr, int n_lookup);
-amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real source_threshold = 1.0e-8);
+amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real source_threshold);
 
 // function to compute discrete LGF kernel for 2D
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE 
@@ -52,7 +52,7 @@ amrex::Real computeLGF(int n_lookup,
     
     // convert physical distance to integer grid offsets
     int AMREX_D_DECL(nx = amrex::Math::abs(amrex::Math::round(dx_dist / dx_val)),
-                    ny = amrex::Math::abs(amrex::Math::round(dy_dist / dx_val)),
+                    ny = amrex::Math::abs(amrex::Math::round(dy_dist / dy_val)),
                     nz = amrex::Math::abs(amrex::Math::round(dz_dist / dz_val)));
 
     // 2D Kernel computations
