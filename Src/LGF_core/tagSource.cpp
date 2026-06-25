@@ -2,7 +2,7 @@
 
 using namespace amrex;
 
-amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real source_threshold)
+void tagSource(amrex::Gpu::DeviceVector<int>& d_is_box_tagged, const amrex::MultiFab& phifab, const amrex::Real source_threshold)
 {
     // perform grid tagging by assigning an int to each box
     // 0 = to be excluded during packing
@@ -13,12 +13,20 @@ amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real so
 
     const int num_local_boxes = phifab.local_size();
 
-    // making vectors corresponding to device and host on each MPI rank
-    amrex::Gpu::DeviceVector<int> d_is_box_tagged(num_local_boxes, 0);
-    amrex::Vector<int> is_box_tagged(num_local_boxes, 0);
+    // ensure capacity matches without forcing a reallocation if it's already sized
+    if (d_is_box_tagged.size() != num_local_boxes) 
+    {
+        d_is_box_tagged.resize(num_local_boxes);
+    }
 
-    // obtaining raw pointers for GPU
+    // obtain raw pointers for GPU
     int* d_flags_ptr = d_is_box_tagged.dataPtr();
+    
+    // utilize the AMReX compute stream to zero the array natively on the GPU
+    amrex::ParallelFor(num_local_boxes, [=] AMREX_GPU_DEVICE (int i) 
+    {
+        d_flags_ptr[i] = 0;
+    });
 
 #ifdef AMREX_USE_OMP
     #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -35,16 +43,8 @@ amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real so
         {
             if (amrex::Math::abs(phi_arr(i,j,k)) > source_threshold)
             {
-                d_flags_ptr[local_idx] = 1;
+                amrex::Gpu::Atomic::Max(&d_flags_ptr[local_idx], 1);
             }
         });
     }
-
-    // waiting until all GPU streams have completed their work
-    amrex::Gpu::Device::synchronize();
-
-    // copy back the is_box_tagged array from GPU
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_is_box_tagged.begin(), d_is_box_tagged.end(), is_box_tagged.begin());
-
-    return is_box_tagged;
 }

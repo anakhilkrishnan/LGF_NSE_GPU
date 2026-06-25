@@ -109,13 +109,17 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
 
     // solving the poisson equation to get correct pressure initial conditions
     // force solver to tag all cells by providing source_tag_thresh = 0.0
-    amrex::Vector<int> init_tag_region = tagSource(init_state.getDivU(), 0.0);
-    addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, init_tag_region, nLookup);
+    tagSource(box_tag_arr, init_state.getDivU(), 0.0);
+    addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, box_tag_arr, nLookup, consolSource, buff);
+
+    // copy device tagging array to host after resizing
+    tag_region.resize(box_tag_arr.size());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
 
     // export tagged cells used for pressure computation
     for (MFIter mfi(init_state.getTagRegion()); mfi.isValid(); ++mfi) 
     {
-        if (init_tag_region[mfi.LocalIndex()] == 1) 
+        if (tag_region[mfi.LocalIndex()] == 1) 
         {
             // If active, fill the entire box with 1.0 (on the GPU)
             init_state.getTagRegion()[mfi].setVal<RunOn::Device>(1.0); 
@@ -345,7 +349,7 @@ void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& s
     stage.setBoundary();
 }
 
-void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh, amrex::Vector<int>& box_tag_arr, int nLookup)
+void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh, int nLookup)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
@@ -375,13 +379,13 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
     // use the custom lgf solver to compute the pressure at the next time step
     // running the tagging algorithmn and obtaining the box tags as an array of
     // 0s and 1s
-    box_tag_arr = tagSource(stage.getDivU(), source_tag_thresh);
+    tagSource(box_tag_arr, stage.getDivU(), source_tag_thresh);
     
     // write out divU_max_norm
     divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
     // performing addition of box values 
-    addEverySourceBox(stage.getDivU(), corr_pres, geom, box_tag_arr, nLookup); 
+    addEverySourceBox(stage.getDivU(), corr_pres, geom, box_tag_arr, nLookup, consolSource, buff); 
 
     corr_pres.FillBoundary(geom.periodicity());
 }
@@ -479,7 +483,6 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
 
     FlowField stage = state_n;
     amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_order);
-    amrex::Vector<int> tag_region;
 
     for(int k = 0; k < rk_order; ++k)
     {
@@ -505,7 +508,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         // find divergence of predicted velocity, store in workspace use custom
         // LGF solver to find pressure correction delta update pressure stored
         // in stage
-        computePressure(stage, source_tag_thresh, tag_region, n_lookup);
+        computePressure(stage, source_tag_thresh, n_lookup);
 
         // use pressure to compute velocity correction store correction in
         // workspace
@@ -515,6 +518,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         correctVelocityandPressure(stage, gamma, dt);
         
     }
+
+    // copy device tagging array to host after resizing
+    tag_region.resize(box_tag_arr.size());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
 
     // export tagged cells at the end of each time step
     for (MFIter mfi(stage.getTagRegion()); mfi.isValid(); ++mfi) 

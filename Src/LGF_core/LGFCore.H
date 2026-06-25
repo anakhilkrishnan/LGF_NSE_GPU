@@ -24,14 +24,24 @@ struct FabMetaData
 
 struct ConsolidatedData 
 {
-    amrex::Vector<amrex::Real> data;
-    amrex::Vector<FabMetaData> metadata;
+    amrex::Gpu::DeviceVector<amrex::Real> data;
+    amrex::Gpu::DeviceVector<FabMetaData> metadata;
+};
+
+struct LGFCommBuffers 
+{
+    amrex::Vector<FabMetaData> h_local_meta;
+    amrex::Gpu::DeviceVector<amrex::Real> d_local_data;
+    amrex::Gpu::DeviceVector<FabMetaData> d_local_meta;
+
+    amrex::Gpu::DeviceVector<int> d_data_displs;
+    amrex::Gpu::DeviceVector<int> d_meta_displs;
 };
 
 // defining key functions within LGFcore
-ConsolidatedData consolidateMultiFab(const amrex::MultiFab& phifab, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr);
-void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Geometry& geom, amrex::Vector<int> box_tag_arr, int n_lookup);
-amrex::Vector<int> tagSource(const amrex::MultiFab& phifab, const amrex::Real source_threshold);
+void tagSource(amrex::Gpu::DeviceVector<int>& d_is_box_tagged, const amrex::MultiFab& phifab, const amrex::Real source_threshold);
+void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phifab, const amrex::Geometry& geom, amrex::Gpu::DeviceVector<int>& box_tag_arr, LGFCommBuffers& buff);
+void addEverySourceBox(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Geometry& geom, amrex::Gpu::DeviceVector<int>& box_tag_arr, int n_lookup, ConsolidatedData& consolSource, LGFCommBuffers& buff) ;
 
 // function to compute discrete LGF kernel for 2D
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE 

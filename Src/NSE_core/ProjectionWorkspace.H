@@ -18,8 +18,6 @@ using namespace amrex;
 
 // free functions for convenience/plotting
 amrex::MultiFab computeCellCenteredVorticity(const FlowField& state);
-amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> computeKEFromState(const FlowField& state);
-
 
 class ProjectionWorkspace
 {
@@ -33,6 +31,11 @@ class ProjectionWorkspace
         amrex::MultiFab corr_pres;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
+
+        amrex::Vector<int> tag_region;
+        amrex::Gpu::DeviceVector<int> box_tag_arr;
+        ConsolidatedData consolSource;
+        LGFCommBuffers buff;
         
     public: 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
@@ -54,7 +57,7 @@ class ProjectionWorkspace
 
         void computeMomentumFluxes(const FlowField& stage, amrex::Real Re);
         void predictVelocity(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
-        void computePressure(FlowField& stage, amrex::Real source_tag_thresh, amrex::Vector<int>& box_tag_arr, int nLookup);
+        void computePressure(FlowField& stage, amrex::Real source_tag_thresh, int nLookup);
         void computeVelocityCorrection(FlowField& stage);
         void correctVelocityandPressure(FlowField& stage, amrex::Real gamma, amrex::Real dt);
 
