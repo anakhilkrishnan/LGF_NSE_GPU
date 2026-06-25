@@ -1,8 +1,7 @@
 #!/bin/sh
-
 #SBATCH --job-name=LGF_NSE_GPU_run
-#SBATCH --partition=gpusinglenode
-#SBATCH --nodes=1
+#SBATCH --partition=gpumultinode
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:2
 #SBATCH --time=01:00:00
@@ -12,7 +11,7 @@
 # Ensure the correctly configured CUDAROOT path is loaded
 source ~/.bashrc
 
-# Environment Initialization 
+# Environment Initialization
 # (PARAM Pravega often utilizes 'spack load' alongside standard modules, adjust if required)
 module load openmpi/openmpi_4.0.5_ucx_cuda_11.2_with_gcc
 
@@ -27,17 +26,14 @@ export OMPI_MCA_osc=ucx
 export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,gdr_copy
 export UCX_MEMTYPE_CACHE=n
 export UCX_RNDV_THRESH=8192
-
 export AMREX_USE_GPU_AWARE_MPI=1
 
 ulimit -s unlimited
-
 cd $SLURM_SUBMIT_DIR
 
 EXEC="./nserun"
 INPUTS_FILE="inputs"
 
-# Small .sh file to correctly choose GPUs and map to each rank
 cat > select_gpu.sh <<'EOF'
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=$OMPI_COMM_WORLD_LOCAL_RANK
