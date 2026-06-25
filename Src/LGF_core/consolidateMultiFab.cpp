@@ -10,20 +10,20 @@ void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phi
     const int num_local_boxes = phifab.local_size();
 
     // copy the box tagging array to host to setup h_local_meta to handle device side copy
-    amrex::Vector<int> h_box_tag_arr(num_local_boxes);
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), h_box_tag_arr.begin());
+    buff.h_box_tag_arr.resize(num_local_boxes);
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), buff.h_box_tag_arr.begin());
 
     int my_data_size = 0;
     int my_meta_size = 0; // Index counter for active boxes
-    amrex::Vector<int> box_data_offsets(num_local_boxes, 0);
 
     // ensure host buffer capacity (only allocates on first run if capacity is low)
+    buff.h_box_data_offsets.resize(num_local_boxes);
     buff.h_local_meta.resize(num_local_boxes);
 
     for (MFIter mfi(phifab); mfi.isValid(); ++mfi)
     {
-        int local_idx = mfi.LocalIndex();
-        if (h_box_tag_arr[local_idx] == 0) 
+        const int local_idx = mfi.LocalIndex();
+        if (buff.h_box_tag_arr[local_idx] == 0) 
         {
             continue;
         }
@@ -31,7 +31,7 @@ void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phi
         const Box& bx = mfi.validbox();
         
         // track the starting index for this box's floating point data
-        box_data_offsets[local_idx] = my_data_size; 
+        buff.h_box_data_offsets[local_idx] = my_data_size; 
 
         // direct assignment using index counter (overwrites old data, no push_back)
         buff.h_local_meta[my_meta_size] = {my_data_size, bx.smallEnd(), bx.bigEnd(), geom.CellSizeArray()};
@@ -53,17 +53,17 @@ void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phi
                      buff.d_local_meta.begin());
 
     // native device packing kernel
-    for (MFIter mfi(phifab, TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    for (MFIter mfi(phifab); mfi.isValid(); ++mfi)
     {
-        int local_idx = mfi.LocalIndex();
-        if (h_box_tag_arr[local_idx] == 0) 
+        const int local_idx = mfi.LocalIndex();
+        if (buff.h_box_tag_arr[local_idx] == 0) 
         {
             continue;
         }
 
         const Box& bx = mfi.validbox();
         auto const& phi_arr = phifab.const_array(mfi);
-        int offset = box_data_offsets[local_idx];
+        const int offset = buff.h_box_data_offsets[local_idx];
         
         const auto lo = bx.smallEnd();
         const auto len = bx.length();
@@ -87,59 +87,70 @@ void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phi
     // sync gpus before starting mpi sharing
     amrex::Gpu::streamSynchronize();
 
-    Vector<int> data_counts(nprocs), data_displs(nprocs + 1, 0);
-    Vector<int> meta_counts(nprocs), meta_displs(nprocs + 1, 0);
+    // size the MPI bookkeeping vectors once; subsequent calls are no-ops
+    buff.data_counts.resize(nprocs);
+    buff.meta_counts.resize(nprocs);
+    buff.data_displs.resize(nprocs + 1);
+    buff.meta_displs.resize(nprocs + 1);
+    buff.d_byte_counts.resize(nprocs);
+    buff.m_byte_counts.resize(nprocs);
+    buff.d_byte_displs.resize(nprocs + 1);
+    buff.m_byte_displs.resize(nprocs + 1);
 
 #ifdef BL_USE_MPI
-    MPI_Allgather(&my_data_size, 1, MPI_INT, data_counts.data(), 1, MPI_INT, ParallelDescriptor::Communicator());
-    MPI_Allgather(&my_meta_size, 1, MPI_INT, meta_counts.data(), 1, MPI_INT, ParallelDescriptor::Communicator());
+    MPI_Allgather(&my_data_size, 1, MPI_INT, buff.data_counts.data(), 1, MPI_INT, ParallelDescriptor::Communicator());
+    MPI_Allgather(&my_meta_size, 1, MPI_INT, buff.meta_counts.data(), 1, MPI_INT, ParallelDescriptor::Communicator());
 #else
-    data_counts[0] = my_data_size;
-    meta_counts[0] = my_meta_size;
+    buff.data_counts[0] = my_data_size;
+    buff.meta_counts[0] = my_meta_size;
 #endif
+
+    buff.data_displs[0] = 0;
+    buff.meta_displs[0] = 0;
+    buff.d_byte_displs[0] = 0;
+    buff.m_byte_displs[0] = 0;
 
     // calculate memory displacements for the global arrays
     for (int i = 0; i < nprocs; ++i)
     {
-        data_displs[i+1] = data_displs[i] + data_counts[i];
-        meta_displs[i+1] = meta_displs[i] + meta_counts[i];
+        buff.data_displs[i+1] = buff.data_displs[i] + buff.data_counts[i];
+        buff.meta_displs[i+1] = buff.meta_displs[i] + buff.meta_counts[i];
+
+        buff.d_byte_counts[i]   = buff.data_counts[i] * sizeof(amrex::Real);
+        buff.m_byte_counts[i]   = buff.meta_counts[i] * sizeof(FabMetaData);
+        buff.d_byte_displs[i+1] = buff.d_byte_displs[i] + buff.d_byte_counts[i];
+        buff.m_byte_displs[i+1] = buff.m_byte_displs[i] + buff.m_byte_counts[i];
     }
 
-    int total_data_size = data_displs[nprocs];
-    int total_meta_size = meta_displs[nprocs];
+    const int total_data_size = buff.data_displs[nprocs];
+    const int total_meta_size = buff.meta_displs[nprocs];
 
     // Resize global target buffers (zero-cost if capacity already exists)
     consolPhi.data.resize(total_data_size);
     consolPhi.metadata.resize(total_meta_size);
 
-    Vector<int> d_byte_counts(nprocs), d_byte_displs(nprocs + 1, 0);
-    Vector<int> m_byte_counts(nprocs), m_byte_displs(nprocs + 1, 0);
-
-    for (int i = 0; i < nprocs; ++i)
-    {
-        d_byte_counts[i]   = data_counts[i] * sizeof(amrex::Real);
-        d_byte_displs[i+1] = d_byte_displs[i] + d_byte_counts[i];
-
-        m_byte_counts[i]   = meta_counts[i] * sizeof(FabMetaData);
-        m_byte_displs[i+1] = m_byte_displs[i] + m_byte_counts[i];
-    }
-
 #ifdef BL_USE_MPI
     // transmitting natively from VRAM to VRAM bypassing the CPU entirely
     MPI_Allgatherv(buff.d_local_data.dataPtr(),
-                   d_byte_counts[ParallelDescriptor::MyProc()], MPI_BYTE,
+                   buff.d_byte_counts[ParallelDescriptor::MyProc()], MPI_BYTE,
                    consolPhi.data.dataPtr(),
-                   d_byte_counts.data(), d_byte_displs.data(), MPI_BYTE,
+                   buff.d_byte_counts.data(), buff.d_byte_displs.data(), MPI_BYTE,
                    ParallelDescriptor::Communicator());
 
     MPI_Allgatherv(buff.d_local_meta.dataPtr(),
-                   m_byte_counts[ParallelDescriptor::MyProc()], MPI_BYTE,
+                   buff.m_byte_counts[ParallelDescriptor::MyProc()], MPI_BYTE,
                    consolPhi.metadata.dataPtr(),
-                   m_byte_counts.data(), m_byte_displs.data(), MPI_BYTE,
+                   buff.m_byte_counts.data(), buff.m_byte_displs.data(), MPI_BYTE,
                    ParallelDescriptor::Communicator());
 #else
-    amrex::Gpu::copy(amrex::Gpu::deviceToDevice, buff.d_local_data.begin(), buff.d_local_data.begin() + my_data_size, consolPhi.data.begin());
-    amrex::Gpu::copy(amrex::Gpu::deviceToDevice, buff.d_local_meta.begin(), buff.d_local_meta.begin() + my_meta_size, consolPhi.metadata.begin());
+    amrex::Gpu::copy(amrex::Gpu::deviceToDevice,
+                     buff.d_local_data.begin(),
+                     buff.d_local_data.begin() + my_data_size,
+                     consolPhi.data.begin());
+    amrex::Gpu::copy(amrex::Gpu::deviceToDevice,
+                     buff.d_local_meta.begin(),
+                     buff.d_local_meta.begin() + my_meta_size,
+                     consolPhi.metadata.begin());
 #endif
 
     // syncs GPUs before offset correction
@@ -148,8 +159,12 @@ void consolidateMultiFab(ConsolidatedData& consolPhi, const amrex::MultiFab& phi
     // device side offset updating for correct unpacking
     buff.d_data_displs.resize(nprocs + 1);
     buff.d_meta_displs.resize(nprocs + 1);
-    amrex::Gpu::copy(amrex::Gpu::hostToDevice, data_displs.begin(), data_displs.end(), buff.d_data_displs.begin());
-    amrex::Gpu::copy(amrex::Gpu::hostToDevice, meta_displs.begin(), meta_displs.end(), buff.d_meta_displs.begin());
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice,
+                     buff.data_displs.begin(), buff.data_displs.end(),
+                     buff.d_data_displs.begin());
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice,
+                     buff.meta_displs.begin(), buff.meta_displs.end(),
+                     buff.d_meta_displs.begin());
 
     FabMetaData* global_meta_ptr = consolPhi.metadata.dataPtr();
     int* meta_displs_ptr = buff.d_meta_displs.dataPtr();

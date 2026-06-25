@@ -30,12 +30,22 @@ struct ConsolidatedData
 
 struct LGFCommBuffers 
 {
+    // host buffers
     amrex::Vector<FabMetaData> h_local_meta;
-    amrex::Gpu::DeviceVector<amrex::Real> d_local_data;
-    amrex::Gpu::DeviceVector<FabMetaData> d_local_meta;
+    amrex::Vector<int>         h_box_tag_arr;
+    amrex::Vector<int>         h_box_data_offsets;
 
-    amrex::Gpu::DeviceVector<int> d_data_displs;
-    amrex::Gpu::DeviceVector<int> d_meta_displs;
+    // MPI bookkeeping (host; sized to nprocs once)
+    amrex::Vector<int> data_counts, data_displs;
+    amrex::Vector<int> meta_counts, meta_displs;
+    amrex::Vector<int> d_byte_counts, d_byte_displs;
+    amrex::Vector<int> m_byte_counts, m_byte_displs;
+
+    // device buffers 
+    amrex::Gpu::DeviceVector<amrex::Real>     d_local_data;
+    amrex::Gpu::DeviceVector<FabMetaData>     d_local_meta;
+    amrex::Gpu::DeviceVector<int>             d_data_displs;
+    amrex::Gpu::DeviceVector<int>             d_meta_displs;
 };
 
 // defining key functions within LGFcore

@@ -122,14 +122,10 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     tagSource(box_tag_arr, init_state.getDivU(), 0.0);
     addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, box_tag_arr, nLookup, consolSource, buff);
 
-    // copy device tagging array to host after resizing
-    tag_region.resize(box_tag_arr.size());
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
-
     // export tagging data into plotting multifab
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        const amrex::Real v = (tag_region[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        const amrex::Real v = (buff.h_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 
@@ -526,14 +522,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         
     }
 
-    // copy device tagging array to host after resizing
-    tag_region.resize(box_tag_arr.size());
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
-
     // export tagged cells at the end of each time step
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        const amrex::Real v = (tag_region[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        const amrex::Real v = (buff.h_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 

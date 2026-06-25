@@ -34,7 +34,6 @@ class ProjectionWorkspace
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
 
-        amrex::Vector<int> tag_region;
         amrex::Gpu::DeviceVector<int> box_tag_arr;
         ConsolidatedData consolSource;
         LGFCommBuffers buff;
