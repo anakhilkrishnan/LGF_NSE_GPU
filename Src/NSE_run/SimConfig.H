@@ -10,6 +10,7 @@ struct SimConfig
     // grid parameters
     int n_cell;
     int max_grid_size;
+    int max_grid_size_tagging;
     int n_ghost;
     int n_comp = 1;
     amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
@@ -53,8 +54,9 @@ struct SimConfig
     {
         amrex::ParmParse pp;
 
-        pp.get("n_cell",n_cell);
-        pp.get("max_grid_size",max_grid_size);
+        pp.get("n_cell", n_cell);
+        pp.get("max_grid_size", max_grid_size);
+        pp.get("max_grid_size_tagging",max_grid_size_tagging);
         pp.get("n_ghost", n_ghost);
         pp.query("n_comp", n_comp);
         pp.get("domain_lo", dom_lo);

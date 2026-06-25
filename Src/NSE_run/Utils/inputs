@@ -2,30 +2,31 @@ amrex.max_gpu_streams = 4
 
 n_cell = 512
 max_grid_size = 512
+max_grid_size_tagging = 16
 n_ghost = 1
 n_comp = 1
 domain_lo = -1.0 -1.0 -1.0
 domain_hi = 1.0 1.0 1.0
 
 rk_order = 2
-max_steps = 30
+max_steps = 10
 t_start = 0.0
 t_stop = 10.0
 cfl = 0.5
 
 Re = 30000
-tagging_threshold = 0.0
+tagging_threshold = 1e-10
 
 n_lookup = 32
 
 write_plot = true
-plot_int = 10
+plot_int = 5
 plot_dir = "./Results"
 plot_prefix = "/plt"
 
 write_chk = true
 start_from_chk = false
-chk_int = 20
+chk_int = 5
 chk_dir = "./Checkpoints/main"
 altchk_dir = "./Checkpoints/alt"
 chk_prefix = "/chk"

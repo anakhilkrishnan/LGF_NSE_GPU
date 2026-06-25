@@ -25,6 +25,8 @@ class ProjectionWorkspace
         amrex::Geometry geom;
         amrex::BoxArray ba;
         amrex::DistributionMapping dm;
+        amrex::BoxArray ba_fine;
+        amrex::DistributionMapping dm_fine;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
@@ -36,7 +38,12 @@ class ProjectionWorkspace
         amrex::Gpu::DeviceVector<int> box_tag_arr;
         ConsolidatedData consolSource;
         LGFCommBuffers buff;
-        
+
+        amrex::MultiFab divU_fine;
+        amrex::MultiFab tagRegion_fine;
+
+        FlowField stage;
+
     public: 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
@@ -45,7 +52,7 @@ class ProjectionWorkspace
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;
 
-        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost);
+        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging);
 
         amrex::Real computeDt(const FlowField& state, amrex::Real cfl, amrex::Real Re);
         void initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh, int nLookup);

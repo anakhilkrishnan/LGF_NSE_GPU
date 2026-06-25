@@ -57,7 +57,7 @@ void extendedMain()
     // create flow field object
     FlowField state_n(geom, ba, dm, cfg.n_comp, cfg.n_ghost);
     // create solver object
-    ProjectionWorkspace workspace(geom, ba, dm, cfg.n_comp, cfg.n_ghost);
+    ProjectionWorkspace workspace(geom, ba, dm, cfg.n_comp, cfg.n_ghost, cfg.max_grid_size_tagging);
 
     if (cfg.start_from_chk)
     {

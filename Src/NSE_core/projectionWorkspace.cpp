@@ -1,8 +1,18 @@
 #include <ProjectionWorkspace.H>
 
-ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost)
-    : geom(geom_in), ba(ba_in), dm(dm_in)
+ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging)
+    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, n_comp, n_ghost)
 {
+    ba_fine = amrex::BoxArray(geom.Domain());
+    ba_fine.maxSize(max_grid_size_tagging);
+    dm_fine.define(ba_fine);
+
+    divU_fine.define(ba_fine, dm_fine, 1, 0);
+    divU_fine.setVal(0.0);
+
+    tagRegion_fine.define(ba_fine, dm_fine, 1, 0);
+    tagRegion_fine.setVal(0.0);
+
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         // convert the box array to face centered
@@ -116,20 +126,14 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     tag_region.resize(box_tag_arr.size());
     amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
 
-    // export tagged cells used for pressure computation
-    for (MFIter mfi(init_state.getTagRegion()); mfi.isValid(); ++mfi) 
+    // export tagging data into plotting multifab
+    for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        if (tag_region[mfi.LocalIndex()] == 1) 
-        {
-            // If active, fill the entire box with 1.0 (on the GPU)
-            init_state.getTagRegion()[mfi].setVal<RunOn::Device>(1.0); 
-        } 
-        else 
-        {
-            // If inactive, fill the entire box with 0.0 (on the GPU)
-            init_state.getTagRegion()[mfi].setVal<RunOn::Device>(0.0); 
-        }
+        const amrex::Real v = (tag_region[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
+
+    stage.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
 
     // compute divU_at_end
     for(amrex::MFIter mfi(init_state.getDivUAtEnd(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
@@ -376,16 +380,19 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
         });
     }
 
+    // copy divU into the fine MultiFab for efficient tagging
+    divU_fine.ParallelCopy(stage.getDivU(), 0, 0, 1, 0, 0);
+
     // use the custom lgf solver to compute the pressure at the next time step
     // running the tagging algorithmn and obtaining the box tags as an array of
     // 0s and 1s
-    tagSource(box_tag_arr, stage.getDivU(), source_tag_thresh);
+    tagSource(box_tag_arr, divU_fine, source_tag_thresh);
     
     // write out divU_max_norm
     divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
     // performing addition of box values 
-    addEverySourceBox(stage.getDivU(), corr_pres, geom, box_tag_arr, nLookup, consolSource, buff); 
+    addEverySourceBox(divU_fine, corr_pres, geom, box_tag_arr, nLookup, consolSource, buff); 
 
     corr_pres.FillBoundary(geom.periodicity());
 }
@@ -481,7 +488,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
 
     BL_PROFILE("<Compute> advanceTimeStep()");
 
-    FlowField stage = state_n;
+    stage = state_n;
     amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_order);
 
     for(int k = 0; k < rk_order; ++k)
@@ -524,19 +531,13 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
     amrex::Gpu::copy(amrex::Gpu::deviceToHost, box_tag_arr.begin(), box_tag_arr.end(), tag_region.begin());
 
     // export tagged cells at the end of each time step
-    for (MFIter mfi(stage.getTagRegion()); mfi.isValid(); ++mfi) 
+    for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        if (tag_region[mfi.LocalIndex()] == 1) 
-        {
-            // If active, fill the entire box with 1.0 (on the GPU)
-            stage.getTagRegion()[mfi].setVal<RunOn::Device>(1.0); 
-        } 
-        else 
-        {
-            // If inactive, fill the entire box with 0.0 (on the GPU)
-            stage.getTagRegion()[mfi].setVal<RunOn::Device>(0.0); 
-        }
+        const amrex::Real v = (tag_region[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
+
+    stage.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
 
     state_n = stage;
 }
