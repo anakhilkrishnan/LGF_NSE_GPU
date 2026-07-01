@@ -1,24 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 
-
-# set of default values for a typical gpu run
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "cmake build type")
 set(AMReX_SPACEDIM "2" CACHE STRING "Spatial Dimension")
 set(AMReX_MPI YES CACHE BOOL "Enable MPI")
 set(AMReX_TINY_PROFILE YES CACHE BOOL "Enable Tiny Profiling")
 set(AMReX_MEM_PROFILE YES CACHE BOOL "Enable Memory Profiling")
+
+# set of default values for a typical gpu run
 set(AMReX_GPU_BACKEND "CUDA" CACHE STRING "GPU Backend")
 set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "GPU Architecture")
 
 project(LGF_NSE LANGUAGES C CXX CUDA)
 
 # # set of default values for typical cpu run
-# set(CMAKE_BUILD_TYPE "Release" CACHE STRING "cmake build type")
-# set(AMReX_SPACEDIM "2" CACHE STRING "Spatial Dimension")
-# set(AMReX_MPI YES CACHE BOOL "Enable MPI")
 # set(AMReX_OMP OFF CACHE BOOL "Enable OpenMP")
-# set(AMReX_TINY_PROFILE YES CACHE BOOL "Enable Tiny Profiling")
-# set(AMReX_MEM_PROFILE YES CACHE BOOL "Enable Memory Profiling")
 
 # project(LGF_NSE LANGUAGES C CXX)
 
