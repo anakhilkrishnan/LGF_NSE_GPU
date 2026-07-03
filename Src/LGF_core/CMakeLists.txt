@@ -6,7 +6,11 @@ add_library(LGF_core_lib STATIC
     LGFCore.H
 )
 
-setup_target_for_cuda_compilation(LGF_core_lib)
+# Use AMReX macro for cuda compilation using CMake                
+if(AMREX_GPU_BACKED STREQUAL "CUDA")
+    setup_target_for_cuda_compilation(LGF_core_lib)
+endif()
+
 
 # Tell CMake where the headers from local sources and submodules are
 target_include_directories(LGF_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

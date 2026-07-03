@@ -7,7 +7,11 @@ add_executable(nserun
                 IOManager.H)
 
 # uncomment below line for gpu compilation
-setup_target_for_cuda_compilation(nserun)
+# Use AMReX macro for cuda compilation using CMake                
+if(AMREX_GPU_BACKED STREQUAL "CUDA")
+    setup_target_for_cuda_compilation(nserun)
+endif()
+
 
 find_package(OpenMP REQUIRED)
 target_link_libraries(nserun PRIVATE OpenMP::OpenMP_CXX)

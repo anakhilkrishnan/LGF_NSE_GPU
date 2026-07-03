@@ -1,21 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 
+# typical values (included for ease of building)
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "cmake build type")
 set(AMReX_SPACEDIM "2" CACHE STRING "Spatial Dimension")
 set(AMReX_MPI YES CACHE BOOL "Enable MPI")
 set(AMReX_TINY_PROFILE YES CACHE BOOL "Enable Tiny Profiling")
 set(AMReX_MEM_PROFILE YES CACHE BOOL "Enable Memory Profiling")
+# enable OpenMP by passing a flag when needed
 
-# set of default values for a typical gpu run
-set(AMReX_GPU_BACKEND "CUDA" CACHE STRING "GPU Backend")
-set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "GPU Architecture")
+project(LGF_NSE LANGUAGES C CXX)
 
-project(LGF_NSE LANGUAGES C CXX CUDA)
-
-# # set of default values for typical cpu run
-# set(AMReX_OMP OFF CACHE BOOL "Enable OpenMP")
-
-# project(LGF_NSE LANGUAGES C CXX)
+if(AMREX_GPU_BACKED STREQUAL "CUDA")
+  enable_language(CUDA)
+  # always specify CMAKE_CUDA_ARCHITECTURES at compile time
+endif()
 
 if(NOT DEFINED AMReX_ROOT)
   message("-- Download and configure AMReX from GitHub")

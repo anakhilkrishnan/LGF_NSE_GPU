@@ -6,8 +6,11 @@ add_library(NSE_core_lib STATIC
                 ProjectionWorkspace.H
                 RKCoefficients.H
                 SpatialDiscretization.H)
-                
-setup_target_for_cuda_compilation(NSE_core_lib)
+
+# Use AMReX macro for cuda compilation using CMake                
+if(AMREX_GPU_BACKED STREQUAL "CUDA")
+    setup_target_for_cuda_compilation(NSE_core_lib)
+endif()
 
 # Tell CMake where the headers (like LGFCore.H) are
 target_include_directories(NSE_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
