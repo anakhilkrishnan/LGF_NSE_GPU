@@ -57,7 +57,7 @@ void extendedMain()
     // create flow field object
     FlowField state_n(geom, ba, dm, cfg.n_comp, cfg.n_ghost);
     // create solver object
-    ProjectionWorkspace workspace(geom, ba, dm, cfg.n_comp, cfg.n_ghost, cfg.max_grid_size_tagging);
+    ProjectionWorkspace workspace(geom, ba, dm, cfg.n_comp, cfg.n_ghost, cfg.max_grid_size_tagging, cfg.n_lookup);
 
     if (cfg.start_from_chk)
     {
@@ -75,7 +75,7 @@ void extendedMain()
         state_n.setBoundary();
 
         // populating pressure based on divergence of Navier-Stokes at initial conditions
-        workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh, cfg.n_lookup);
+        workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh);
 
         // populating KE comp arrays
         workspace.computeKEFromState(state_n);
@@ -125,7 +125,7 @@ void extendedMain()
 
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, dt, cfg.Re, cfg.rk_order, cfg.source_tag_thresh, cfg.n_lookup);
+        workspace.advanceTimeStep(state_n, dt, cfg.Re, cfg.rk_order, cfg.source_tag_thresh);
 
         // update counters
         time += dt;

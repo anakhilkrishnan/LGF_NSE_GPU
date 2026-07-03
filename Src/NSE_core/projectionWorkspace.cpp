@@ -1,7 +1,7 @@
 #include <ProjectionWorkspace.H>
 
-ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging)
-    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, n_comp, n_ghost)
+ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging, const int n_look_in)
+    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, n_comp, n_ghost), n_lookup(n_look_in), lgf_poisson_solver(geom_in, n_look_in)
 {
     ba_fine = amrex::BoxArray(geom.Domain());
     ba_fine.maxSize(max_grid_size_tagging);
@@ -85,7 +85,7 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state, amrex::Real c
     return amrex::min(dt_adv, dt_diff);
 }
 
-void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh, int nLookup)
+void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh)
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
@@ -118,18 +118,18 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     }
 
     // solving the poisson equation to get correct pressure initial conditions
-    // force solver to tag all cells by providing source_tag_thresh = 0.0
-    tagSource(box_tag_arr, init_state.getDivU(), 0.0);
-    addEverySourceBox(init_state.getDivU(), init_state.getPres(), geom, box_tag_arr, nLookup, consolSource, buff);
+    // force solver to tag more cells by providing source_tag_thresh*1e-2
+    tagSource(box_tag_arr, init_state.getDivU(), (source_tag_thresh*0.01));
+    lgf_poisson_solver.solvePoisson(init_state.getDivU(), init_state.getPres(), box_tag_arr);
 
     // export tagging data into plotting multifab
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        const amrex::Real v = (buff.h_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        const amrex::Real v = (lgf_poisson_solver.h_source_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 
-    stage.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
+    init_state.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
 
     // compute divU_at_end
     for(amrex::MFIter mfi(init_state.getDivUAtEnd(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
@@ -349,7 +349,7 @@ void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& s
     stage.setBoundary();
 }
 
-void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh, int nLookup)
+void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
@@ -388,7 +388,7 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
     divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
     // performing addition of box values 
-    addEverySourceBox(divU_fine, corr_pres, geom, box_tag_arr, nLookup, consolSource, buff); 
+    lgf_poisson_solver.solvePoisson(divU_fine, corr_pres, box_tag_arr);
 
     corr_pres.FillBoundary(geom.periodicity());
 }
@@ -475,7 +475,7 @@ void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Re
     }
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh, int n_lookup)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -511,7 +511,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         // find divergence of predicted velocity, store in workspace use custom
         // LGF solver to find pressure correction delta update pressure stored
         // in stage
-        computePressure(stage, source_tag_thresh, n_lookup);
+        computePressure(stage, source_tag_thresh);
 
         // use pressure to compute velocity correction store correction in
         // workspace
@@ -525,7 +525,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
     // export tagged cells at the end of each time step
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
-        const amrex::Real v = (buff.h_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        const amrex::Real v = (lgf_poisson_solver.h_source_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 

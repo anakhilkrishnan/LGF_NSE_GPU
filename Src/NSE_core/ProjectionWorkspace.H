@@ -12,7 +12,7 @@
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
 #include <RKCoefficients.H>
-#include <LGFCore.H>
+#include <directSumLGF.H>
 
 using namespace amrex;
 
@@ -22,6 +22,8 @@ amrex::MultiFab computeCellCenteredVorticity(const FlowField& state);
 class ProjectionWorkspace
 {
     private:
+        int n_lookup;
+
         amrex::Geometry geom;
         amrex::BoxArray ba;
         amrex::DistributionMapping dm;
@@ -35,13 +37,13 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
 
         amrex::Gpu::DeviceVector<int> box_tag_arr;
-        ConsolidatedData consolSource;
-        LGFCommBuffers buff;
 
         amrex::MultiFab divU_fine;
         amrex::MultiFab tagRegion_fine;
 
         FlowField stage;
+
+        directSumLGF lgf_poisson_solver;
 
     public: 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
@@ -51,10 +53,10 @@ class ProjectionWorkspace
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;
 
-        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging);
+        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging, const int n_look_in);
 
         amrex::Real computeDt(const FlowField& state, amrex::Real cfl, amrex::Real Re);
-        void initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh, int nLookup);
+        void initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh);
 
         void computeKECompFluxes(const FlowField& stage, amrex::Real Re);
         void evolveKE(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
@@ -63,11 +65,11 @@ class ProjectionWorkspace
 
         void computeMomentumFluxes(const FlowField& stage, amrex::Real Re);
         void predictVelocity(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
-        void computePressure(FlowField& stage, amrex::Real source_tag_thresh, int nLookup);
+        void computePressure(FlowField& stage, amrex::Real source_tag_thresh);
         void computeVelocityCorrection(FlowField& stage);
         void correctVelocityandPressure(FlowField& stage, amrex::Real gamma, amrex::Real dt);
 
-        void advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh, int n_lookup);
+        void advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh);
 };
 
 #endif

@@ -8,7 +8,7 @@ add_executable(nserun
 
 # uncomment below line for gpu compilation
 # Use AMReX macro for cuda compilation using CMake                
-if(AMREX_GPU_BACKED STREQUAL "CUDA")
+if(AMReX_GPU_BACKEND STREQUAL "CUDA")
     setup_target_for_cuda_compilation(nserun)
 endif()
 
@@ -46,7 +46,14 @@ add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_single.sh"
     "${CMAKE_SOURCE_DIR}/Exec/NSE_test/gpu_single.sh"
-    COMMENT "Syncing GPU jobscript to Exec/NSE_test..."
+)
+
+# Update the jobscript file
+add_custom_command(TARGET nserun POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_multi.sh"
+    "${CMAKE_SOURCE_DIR}/Exec/NSE_test/gpu_multi.sh"
+    COMMENT "Syncing GPU jobscripts to Exec/NSE_test..."
 )
 
 # Update the KE postprocessing file

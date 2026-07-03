@@ -8,7 +8,7 @@ add_library(NSE_core_lib STATIC
                 SpatialDiscretization.H)
 
 # Use AMReX macro for cuda compilation using CMake                
-if(AMREX_GPU_BACKED STREQUAL "CUDA")
+if(AMReX_GPU_BACKEND STREQUAL "CUDA")
     setup_target_for_cuda_compilation(NSE_core_lib)
 endif()
 
