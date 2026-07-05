@@ -43,6 +43,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     corr_pres.setVal(0.0);
 
     divU_max_norm = 0.0;
+    divU_at_end_max_norm = 0.0;
 }
 
 amrex::Real ProjectionWorkspace::computeDt(const FlowField& state, amrex::Real cfl, amrex::Real Re)
@@ -122,6 +123,9 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     tagSource(box_tag_arr, init_state.getDivU(), (source_tag_thresh*0.01));
     lgf_poisson_solver.solvePoisson(init_state.getDivU(), init_state.getPres(), box_tag_arr);
 
+    // write out divU_max_norm
+    divU_max_norm = init_state.getDivU().norm0(0, 0, false);
+
     // export tagging data into plotting multifab
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
     {
@@ -148,6 +152,9 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
             divU_at_end_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
         });
     }
+
+    // write out divU_at_end_max_norm
+    divU_at_end_max_norm = init_state.getDivUAtEnd().norm0(0, 0, false);
 }
 
 void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage, amrex::Real Re)
@@ -383,12 +390,12 @@ void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_t
     // running the tagging algorithmn and obtaining the box tags as an array of
     // 0s and 1s
     tagSource(box_tag_arr, divU_fine, source_tag_thresh);
-    
-    // write out divU_max_norm
-    divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
     // performing addition of box values 
     lgf_poisson_solver.solvePoisson(divU_fine, corr_pres, box_tag_arr);
+    
+    // write out divU_max_norm
+    divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
     corr_pres.FillBoundary(geom.periodicity());
 }
@@ -473,6 +480,9 @@ void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Re
             divU_at_end_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
         });
     }
+
+    // write out divU_at_end_max_norm
+    divU_at_end_max_norm = stage.getDivUAtEnd().norm0(0, 0, false);
 }
 
 void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh)

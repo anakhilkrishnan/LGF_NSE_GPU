@@ -49,6 +49,7 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
         amrex::Real divU_max_norm;
+        amrex::Real divU_at_end_max_norm;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;

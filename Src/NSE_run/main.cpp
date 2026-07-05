@@ -27,9 +27,9 @@ void extendedMain()
     IOManager io(cfg);
 
     // creating timestepping variables beforehand
-    amrex::Real time;
+    amrex::Real time = 0.0;
     int step = 0;
-    amrex::Real dt;
+    amrex::Real dt = 0.0;
 
     // creating domain data objects
     amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
@@ -109,6 +109,13 @@ void extendedMain()
     // switch for main and alt chk files
     bool writeMainChk = true;
 
+    // tracking solver initialization time, from the moment 
+    auto init_stop_time = amrex::second();
+    auto init_duration = init_stop_time - overall_start_time;
+    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt 
+                    << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
+                    << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
+
     // timestepping logic begins
     while(time < cfg.t_stop && step < cfg.max_steps)
     {
@@ -153,7 +160,8 @@ void extendedMain()
 
         // print to terminal each timestep
         amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt 
-                       << " | WallTime: " << (step_duration) << "s | divU_max: " << workspace.divU_max_norm << "\n";
+                        << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
+                        << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
     }
 
     // perform KEP check and write data for the last time

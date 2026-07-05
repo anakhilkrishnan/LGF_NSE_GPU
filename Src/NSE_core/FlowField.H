@@ -16,8 +16,8 @@ class FlowField
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp;
         amrex::MultiFab pres;
-        amrex::MultiFab divU;
-        amrex::MultiFab divU_at_end;
+        amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
+        amrex::MultiFab divU_at_end; // refers to divU at the end of a time step
         amrex::MultiFab tagRegion;
         amrex::Geometry globalgeom;
 
