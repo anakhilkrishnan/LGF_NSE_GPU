@@ -141,7 +141,7 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
-void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom)
+void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const amrex::Geometry& geom, const amrex::BoxArray ba, const amrex::DistributionMapping dm)
 {
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;

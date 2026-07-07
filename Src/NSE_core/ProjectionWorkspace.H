@@ -12,7 +12,7 @@
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
 #include <RKCoefficients.H>
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
 
 using namespace amrex;
 
@@ -43,7 +43,7 @@ class ProjectionWorkspace
 
         FlowField stage;
 
-        directSumLGF lgf_poisson_solver;
+        DirectSumLGF lgf_poisson_solver;
 
     public: 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;

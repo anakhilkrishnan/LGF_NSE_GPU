@@ -1,4 +1,4 @@
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
 
 using namespace amrex;
 

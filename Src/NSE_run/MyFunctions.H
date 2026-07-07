@@ -15,6 +15,7 @@
 #include <IOManager.H>
 #include <SolverConfig.H>
 #include <DomainManager.H>
+#include <InitializeFlow.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
 
@@ -22,6 +23,5 @@
 using namespace amrex;
 
 void extendedMain();
-void initializeVelField(FlowField& init_state);
 
 #endif

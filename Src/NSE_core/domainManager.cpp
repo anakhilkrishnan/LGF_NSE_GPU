@@ -6,6 +6,24 @@ DomainManager::DomainManager(const SolverConfig& config)
     max_grid_size = config.max_grid_size;
     dom_lo = config.dom_lo;
     dom_hi = config.dom_hi;
+    periodicity = config.periodic;
+
+    // creating coarse mesh geom, ba and dm
+    amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
+    amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell_init-1, config.n_cell_init-1, config.n_cell_init-1));
+    amrex::Box domain(dom_lo_iv, dom_hi_iv);
+
+    ba.define(domain);
+    ba.maxSize(config.max_grid_size_init);
+    
+    dm(ba);
+
+    amrex::RealBox real_box(dom_lo, dom_hi);
+    geom(domain, &real_box, amrex::CoordSys::cartesian, periodicity.data());
+
+    // allocate vorticity based on coarse mesh data
+    vort_mag.define(ba, dm, config.n_comp, config.n_ghost);
+    vort_mag.setVal(0.0);
 }
 
 const amrex::Geometry& DomainManager::getGeom() const
@@ -23,21 +41,32 @@ const amrex::DistributionMapping& DomainManager::getDistMap() const
     return dm;
 }
 
-void DomainManager::initializeBoxArray(int n_cell_init, int max_grid_size_init)
+void DomainManager::initializeCoarseVort()
 {
-    // creating domain data objects
-    amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
-    amrex::IntVect dom_hi_iv(AMREX_D_DECL(n_cell_init-1, n_cell_init-1, n_cell_init-1));
-    amrex::Box domain(dom_lo_iv, dom_hi_iv);
+    // extracting dx array and prob_lo to construct real x,y,z
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> prob_lo = geom.ProbLoArray();
 
-    amrex::BoxArray ba;
-    ba.define(domain);
-    ba.maxSize(max_grid_size_init);
+    // initializing coarse voriticy
+    for(amrex::MFIter mfi(vort_mag, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& vort_mag_arr = vort_mag.array(mfi);
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            amrex::Real x = prob_lo[0] + i * dx[0]; 
+            amrex::Real y = prob_lo[1] + j * dx[1];
+        #if AMREX_SPACEDIM == 3
+            amrex::Real z = prob_lo[2] + k * dx[2];
+        #endif
+
+            vort_mag_arr(i,j,k) = vortMag2DAt(x,y,z);
+        });
+    }
+}
+
+void DomainManager::initializeBoxArray()
+{
     
-    amrex::DistributionMapping dm(ba);
-
-    amrex::RealBox real_box(cfg.dom_lo, cfg.dom_hi);
-    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
-    amrex::Geometry geom(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
-
 }

@@ -8,10 +8,11 @@
 struct IOConfig
 {
     // IO parameters
+    bool start_from_chk = true;
+
     bool write_plot = true;
     bool write_chk = true;
     bool write_log = true;
-    bool start_from_chk = true;
     bool write_kedata = true;
 
     int plot_int = 100;

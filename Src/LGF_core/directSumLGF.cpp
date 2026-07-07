@@ -1,6 +1,6 @@
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
 
-directSumLGF::directSumLGF(const amrex::Geometry& geom_in, const int n_look_in) 
+DirectSumLGF::DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in) 
     : geom(geom_in), n_lookup(n_look_in)
 {
 
@@ -11,7 +11,7 @@ directSumLGF::directSumLGF(const amrex::Geometry& geom_in, const int n_look_in)
 // Note: This function isn't given any openmp support because half of it requires serial looping and the other half isn't
 // a bottleneck at all. If it does turn out to be, one can add over the MFIter calling ParallelFor() the desired
 // pragma openmp for cpu builds
-void directSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     BL_PROFILE("<Communicate> consolidateMultiFab()");
 
@@ -200,7 +200,7 @@ void directSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
     }
 }
 
-void directSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     // adding profiling blocks for Tiny/Base profilers
     BL_PROFILE("<Compute> solvePoisson()");

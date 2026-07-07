@@ -18,7 +18,7 @@ struct FabMetaData
 // free tagSource function
 void tagSource(amrex::Gpu::DeviceVector<int>& box_tag_arr, const amrex::MultiFab& phi, const amrex::Real tag_thresh);
 
-class directSumLGF
+class DirectSumLGF
 {
     private:
 
@@ -54,7 +54,7 @@ class directSumLGF
     // supporting functions
     void consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
 
-    directSumLGF(const amrex::Geometry& geom_in, const int n_look_in);
+    DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in);
     void solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
 
 };

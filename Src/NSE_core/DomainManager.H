@@ -12,13 +12,15 @@
 #include <SolverConfig.H>
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
+#include <InitializeFlow.H>
 
 class DomainManager
 {
     private:
         // input variables
         int n_cell, max_grid_size;
+        int n_cell_init, max_grid_size_init;
         amrex::Real eps_star; 
         amrex::Array<AMREX_SPACEDIM, int> periodicity;
         amrex::Array<AMREX_SPACEDIM, amrex::Real> dom_lo, dom_hi;
@@ -28,6 +30,13 @@ class DomainManager
         amrex::BoxArray ba;
         amrex::DistributionMapping dm;
 
+        // scratch space variables
+        amrex::MultiFab vort_mag;
+
+        // helper functions
+        void initializeCoarseVort();
+        void tagDomain();
+        void gatherBoxes();
 
     public:
         // general constructor
@@ -39,8 +48,7 @@ class DomainManager
         const amrex::DistributionMapping& getDistMap() const;
 
         // class functions
-        void initializeBoxArray(int n_cell_init, int max_grid_size_init);
-        void tagDomain();
+        void initializeBoxArray();
         void updateBoxArray();
 };
 

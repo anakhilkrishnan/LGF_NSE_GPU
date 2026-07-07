@@ -41,48 +41,38 @@ void extendedMain()
 
     // PENDING: enable checkpoint restarts again for adaptive domain setup
     
-    // create flow field object
-    FlowField state_n(geom, ba, dm, cfg.n_comp, cfg.n_ghost);
-    // create solver object
-    ProjectionWorkspace workspace(geom, ba, dm, cfg.n_comp, cfg.n_ghost, cfg.max_grid_size_tagging, cfg.n_lookup);
+    // create a coarse vorticity MultiFab with initial conditions, perform tagging,
+    // extract the tagged boxes, refine and generate geom, ba, dm.
+    dmgr.initializeBoxArray();
 
-    if (cfg.start_from_chk)
+    // create flow field object on updated BoxArray that is fine and restricted
+    FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
+
+    // create solver object on updated BoxArray that is fine and restricted
+    ProjectionWorkspace workspace(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
+
+    // initialize velocity data in state_n
+    initializeVelField(state_n);
+    state_n.setBoundary();
+
+    // initialize pressure based on div.(NSE) at initial conditions
+    workspace.initializePresField(state_n);
+
+    // initialize kinetic energy field
+    workspace.computeKEFromState(state_n);
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        io.initializeFlowFieldFromChk(state_n);
-
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
+        amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
     }
-    else 
-    {
-        // starting from initial conditions
-        initializeVelField(state_n);
 
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
-
-        // populating pressure based on divergence of Navier-Stokes at initial conditions
-        workspace.initializePresField(state_n, cfg.Re, cfg.source_tag_thresh);
-
-        // populating KE comp arrays
-        workspace.computeKEFromState(state_n);
-        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-        {
-            amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
-        }
-
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
-
-        time = cfg.t_start;
-        step = 0;
-    }
+    // fill ghost cells and apply BCs
+    state_n.setBoundary();
     
     // plotting initial conditions
-    if (cfg.write_plot && step == 0)
+    if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, ba, dm, geom);
+        io.writeMyPlotFile(step, time, state_n, state_n.getGeom(), state_n.getBoxArr(), state_n.getDistMap());
 
     }
 
