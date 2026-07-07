@@ -11,7 +11,7 @@
 #include <fstream>
 #include <cstdio>
 
-#include <SimConfig.H>
+#include <IOConfig.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
 
@@ -53,7 +53,7 @@ class IOManager
 
     public:
 
-        IOManager(const SimConfig& config);
+        IOManager(const IOConfig& config);
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state);
         void initializeBAFromChk(int& step, amrex::Real& time, amrex::BoxArray& ba);
         void initializeFlowFieldFromChk(FlowField& init_state);

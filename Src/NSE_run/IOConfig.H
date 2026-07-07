@@ -1,33 +1,12 @@
-#ifndef SIMCONFIG_H_
-#define SIMCONFIG_H_
+#ifndef IOCONFIG_H_
+#define IOCONFIG_H_
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Array.H>
 #include <string>
 
-struct SimConfig
+struct IOConfig
 {
-    // grid parameters
-    int n_cell;
-    int max_grid_size;
-    int max_grid_size_tagging;
-    int n_ghost;
-    int n_comp = 1;
-    amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
-
-    // time stepping parameters
-    int rk_order;
-    int max_steps;
-    amrex::Real t_start, t_stop;
-    amrex::Real cfl;
-
-    // physical parameters
-    amrex::Real Re;
-    amrex::Real source_tag_thresh;
-
-    // LGF kernel parameters
-    int n_lookup;
-
     // IO parameters
     bool write_plot = true;
     bool write_chk = true;
@@ -53,25 +32,6 @@ struct SimConfig
     void readInputs()
     {
         amrex::ParmParse pp;
-
-        pp.get("n_cell", n_cell);
-        pp.get("max_grid_size", max_grid_size);
-        pp.get("max_grid_size_tagging",max_grid_size_tagging);
-        pp.get("n_ghost", n_ghost);
-        pp.query("n_comp", n_comp);
-        pp.get("domain_lo", dom_lo);
-        pp.get("domain_hi", dom_hi);
-
-        pp.get("rk_order", rk_order);
-        pp.get("max_steps", max_steps);
-        pp.get("t_start", t_start);
-        pp.get("t_stop", t_stop);
-        pp.get("cfl", cfl);  
-
-        pp.get("Re", Re);
-        pp.get("tagging_threshold", source_tag_thresh);
-
-        pp.get("n_lookup", n_lookup);
 
         pp.query("write_plot", write_plot);
         pp.query("plot_int", plot_int);

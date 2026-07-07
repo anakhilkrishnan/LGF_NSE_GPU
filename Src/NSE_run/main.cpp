@@ -19,41 +19,28 @@ void extendedMain()
 
     auto overall_start_time = amrex::second();
 
-    // creating simulation configuration object and reading inputs
-    SimConfig cfg;
-    cfg.readInputs();
-    
-    // creating input/output object 
-    IOManager io(cfg);
+    // creating IO config struct and reading inputs using ParmParse
+    IOConfig io_cfg;
+    io_cfg.readInputs();
 
+    // creating IO object for plotting/data writing/checkpoint handling etc
+    IOManager io(io_cfg);
+    
+    // creating Solver config struct and reading inputs using ParmParse
+    SolverConfig sol_cfg;
+    sol_cfg.readInputs();
+
+    // creating domain handler object for BoxArray management, tagging
+    // and updating of field variables
+    DomainManager dmgr(sol_cfg);
+    
     // creating timestepping variables beforehand
     amrex::Real time = 0.0;
     int step = 0;
     amrex::Real dt = 0.0;
 
-    // creating domain data objects
-    amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
-    amrex::IntVect dom_hi_iv(AMREX_D_DECL(cfg.n_cell-1, cfg.n_cell-1, cfg.n_cell-1));
-    amrex::Box domain(dom_lo_iv, dom_hi_iv);
-
-    amrex::BoxArray ba;
-    // boxarray taken from ChkPoints if needed
-    if (cfg.start_from_chk)
-    {
-        io.initializeBAFromChk(step, time, ba);
-    }
-    else
-    {
-        ba.define(domain);
-        ba.maxSize(cfg.max_grid_size);
-    }
+    // PENDING: enable checkpoint restarts again for adaptive domain setup
     
-    amrex::DistributionMapping dm(ba);
-
-    amrex::RealBox real_box(cfg.dom_lo, cfg.dom_hi);
-    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
-    amrex::Geometry geom(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
-
     // create flow field object
     FlowField state_n(geom, ba, dm, cfg.n_comp, cfg.n_ghost);
     // create solver object

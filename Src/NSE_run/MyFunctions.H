@@ -11,8 +11,10 @@
 #include <AMReX_BLProfiler.H>
 #include <string>
 
-#include <SimConfig.H>
+#include <IOConfig.H>
 #include <IOManager.H>
+#include <SolverConfig.H>
+#include <DomainManager.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
 
