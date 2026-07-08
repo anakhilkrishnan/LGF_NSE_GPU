@@ -124,8 +124,6 @@ void extendedMain()
     while(time < sol_cfg.t_stop && step < sol_cfg.max_steps)
     {
         auto step_start_time = amrex::second();
-        
-        dt = workspace.computeDt(state_n);
 
         // perform KEP check and write data
         if (step %io_cfg.kedata_int == 0 &&io_cfg.write_kedata)
@@ -134,9 +132,11 @@ void extendedMain()
             io.writeKEData(step, time, workspace);
         }
 
+        // always call computeDt() right before advanceTimeStep()
+        workspace.computeDt(state_n);
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, dt);
+        workspace.advanceTimeStep(state_n);
 
         // update counters
         time += dt;

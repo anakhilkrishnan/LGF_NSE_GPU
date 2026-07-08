@@ -58,7 +58,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     divU_at_end_max_norm = 0.0;
 }
 
-amrex::Real ProjectionWorkspace::computeDt(const FlowField& state)
+void ProjectionWorkspace::computeDt(const FlowField& state)
 {
     const amrex::Geometry& geom = state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
@@ -95,7 +95,7 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state)
     // 1/dx^2 + 1/dy^2 + 1/dz^2 )
     amrex::Real dt_diff = 0.5 * Re / diff_metric;
 
-    return amrex::min(dt_adv, dt_diff);
+    dt = amrex::min(dt_adv, dt_diff);
 }
 
 void ProjectionWorkspace::initializePresField(FlowField& init_state)
@@ -169,18 +169,18 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
     divU_at_end_max_norm = init_state.getDivUAtEnd().norm0(0, 0, false);
 }
 
-void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage)
+void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computeKEFluxes()");
     // compute the right hand side of the KE evolution equations along x,y,z
-    // at the given stage discretized using a second order finite difference
+    // at the given input_state discretized using a second order finite difference
     // KEP scheme as outlined in Morinish et. al.
 
     // function's copy of Re to be passed to GPU lambdas
     amrex::Real Re_temp = Re;
     
     // extracting physical dx for computations
-    const amrex::Geometry& geom = stage.getGeom();
+    const amrex::Geometry& geom = input_state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
     // for each velocity direction, rhs is computed accordingly
@@ -193,7 +193,7 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage)
             // .........................KEFlux directly from MomentumFlux....................................
             // auto const& rhs_ke_arr  = rhs_kecomp[idim].array(mfi);
             // auto const& rhs_vel_arr = rhs_vel[idim].const_array(mfi);
-            // auto const& vel_arr     = stage.getVel(idim).const_array(mfi);
+            // auto const& vel_arr     = input_state.getVel(idim).const_array(mfi);
 
             // amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
             // {
@@ -206,10 +206,10 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage)
             amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> kecomp_arr;
             for (int d = 0; d < AMREX_SPACEDIM; ++d) 
             {
-                vel_arr[d] = stage.getVel(d).const_array(mfi);
-                kecomp_arr[d] = stage.getKEComp(d).const_array(mfi);
+                vel_arr[d] = input_state.getVel(d).const_array(mfi);
+                kecomp_arr[d] = input_state.getKEComp(d).const_array(mfi);
             }
-            auto const& pres_arr = stage.getPres().const_array(mfi);
+            auto const& pres_arr = input_state.getPres().const_array(mfi);
             auto const& rhs_ke_arr  = rhs_kecomp[idim].array(mfi);
 
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -238,7 +238,7 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage)
     }
 }
 
-void ProjectionWorkspace::evolveKE(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma)
+void ProjectionWorkspace::evolveKE(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): evolveKE()");
     // use the right hand side to compute the next stage kinetic energy
@@ -301,16 +301,16 @@ void ProjectionWorkspace::compareKE(const FlowField& state_n)
     }
 }
 
-void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage)
+void ProjectionWorkspace::computeMomentumFluxes(const FlowField& input_state)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computeMomentumFluxes()");
     // compute the right hand side which is of the form 1/Re(laplacian(u)) -
-    // grad(P) - u.divergence(u) all taken at the given stage discretized
+    // grad(P) - u.divergence(u) all taken at the given input_state discretized
     // using a second order finite difference KEP scheme as outlined in
     // Morinishi et. al.
 
     // extracting physical dx for computations
-    const amrex::Geometry& geom = stage.getGeom();
+    const amrex::Geometry& geom = input_state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
     // local copy of Re for passing to GPU lambdas
@@ -319,15 +319,15 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage)
     // for each velocity direction, rhs is computed accordingly
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        for (amrex::MFIter mfi(stage.getVel(idim), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        for (amrex::MFIter mfi(input_state.getVel(idim), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box& bx = mfi.tilebox();
             amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
             for (int d = 0; d < AMREX_SPACEDIM; ++d) 
             {
-                vel_arr[d] = stage.getVel(d).const_array(mfi);
+                vel_arr[d] = input_state.getVel(d).const_array(mfi);
             }
-            auto const& pres_arr = stage.getPres().const_array(mfi);
+            auto const& pres_arr = input_state.getPres().const_array(mfi);
             auto const& rhs = rhs_vel[idim].array(mfi);
 
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -355,7 +355,7 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage)
     }
 }
 
-void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma)
+void ProjectionWorkspace::predictVelocity(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): predictVelocity");
     // use the right hand side to predict velocity at the next stage, before
@@ -374,7 +374,7 @@ void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& s
     stage.setBoundary();
 }
 
-void ProjectionWorkspace::computePressure(FlowField& stage)
+void ProjectionWorkspace::computePressure()
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
@@ -418,7 +418,7 @@ void ProjectionWorkspace::computePressure(FlowField& stage)
     corr_pres.FillBoundary(geom.periodicity());
 }
 
-void ProjectionWorkspace::computeVelocityCorrection(FlowField& stage)
+void ProjectionWorkspace::computeVelocityCorrection()
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computeVelocityCorrection");
 
@@ -460,7 +460,7 @@ void ProjectionWorkspace::computeVelocityCorrection(FlowField& stage)
     }
 }
 
-void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Real gamma, amrex::Real dt)
+void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): correctVelocity()");
 
@@ -503,7 +503,7 @@ void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Re
     divU_at_end_max_norm = stage.getDivUAtEnd().norm0(0, 0, false);
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -527,26 +527,26 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt)
         computeKECompFluxes(stage);
 
         // evolve KE and store back in stage
-        evolveKE(state_n, stage, dt, alpha, beta, gamma);
+        evolveKE(state_n, alpha, beta, gamma);
 
         // compute and store fluxes in workspace
         computeMomentumFluxes(stage);
 
         // compute predicted velocity without divergence free condition store
         // predicted velocity within stage
-        predictVelocity(state_n, stage, dt, alpha, beta, gamma);
+        predictVelocity(state_n, alpha, beta, gamma);
 
         // find divergence of predicted velocity, store in workspace use custom
         // LGF solver to find pressure correction delta update pressure stored
         // in stage
-        computePressure(stage);
+        computePressure();
 
         // use pressure to compute velocity correction store correction in
         // workspace
-        computeVelocityCorrection(stage);
+        computeVelocityCorrection();
 
         // correct stage using correction from workspace
-        correctVelocityandPressure(stage, gamma, dt);
+        correctVelocityandPressure(gamma);
         
     }
 

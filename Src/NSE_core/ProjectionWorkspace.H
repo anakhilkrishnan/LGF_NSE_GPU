@@ -23,17 +23,28 @@ amrex::MultiFab computeCellCenteredVorticity(const FlowField& state);
 class ProjectionWorkspace
 {
     private:
+        // variables that are initialized in constructor call and live 
+        // throughout solver life cycle
         int n_lookup;
         int rk_order;
         amrex::Real cfl;
         amrex::Real Re;
         amrex::Real source_tag_thresh;
+
+        directSumLGF lgf_poisson_solver;
+
+        // variables that are updated continouosly 
+        amrex::Real dt;
+
+        FlowField stage;
         
         amrex::Geometry geom;
         amrex::BoxArray ba;
         amrex::DistributionMapping dm;
         amrex::BoxArray ba_fine;
         amrex::DistributionMapping dm_fine;
+
+        // scratch space type data
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
@@ -46,10 +57,6 @@ class ProjectionWorkspace
         amrex::MultiFab divU_fine;
         amrex::MultiFab tagRegion_fine;
 
-        FlowField stage;
-
-        directSumLGF lgf_poisson_solver;
-
     public: 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
@@ -61,21 +68,24 @@ class ProjectionWorkspace
 
         ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig config);
 
-        amrex::Real computeDt(const FlowField& state);
+        // functions for initialization
         void initializePresField(FlowField& init_state);
 
-        void computeKECompFluxes(const FlowField& stage);
-        void evolveKE(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
+        // functions for KE computations
+        void computeKECompFluxes(const FlowField& input_state);
+        void evolveKE(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
         void computeKEFromState(const FlowField& state);
         void compareKE(const FlowField& state_n);
 
-        void computeMomentumFluxes(const FlowField& stage);
-        void predictVelocity(const FlowField& state_n, FlowField& stage, amrex::Real dt, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
-        void computePressure(FlowField& stage);
-        void computeVelocityCorrection(FlowField& stage);
-        void correctVelocityandPressure(FlowField& stage, amrex::Real gamma, amrex::Real dt);
+        // functions for flow field computations
+        void computeMomentumFluxes(const FlowField& input_state);
+        void predictVelocity(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
+        void computePressure();
+        void computeVelocityCorrection();
+        void correctVelocityandPressure(amrex::Real gamma);
 
-        void advanceTimeStep(FlowField& state_n, amrex::Real dt);
+        void computeDt(const FlowField& state);
+        void advanceTimeStep(FlowField& state_n);
 };
 
 #endif
