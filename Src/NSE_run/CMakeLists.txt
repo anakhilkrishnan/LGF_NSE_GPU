@@ -3,7 +3,7 @@ add_executable(nserun
                 initializeFlow.cpp
                 ioManager.cpp
                 MyFunctions.H
-                SimConfig.H
+                IOConfig.H
                 IOManager.H)
 
 # uncomment below line for gpu compilation
@@ -12,9 +12,10 @@ if(AMReX_GPU_BACKEND STREQUAL "CUDA")
     setup_target_for_cuda_compilation(nserun)
 endif()
 
-
-find_package(OpenMP REQUIRED)
-target_link_libraries(nserun PRIVATE OpenMP::OpenMP_CXX)
+if(AMReX_OMP)
+    find_package(OpenMP REQUIRED)
+    target_link_libraries(nserun PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 target_include_directories(nserun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

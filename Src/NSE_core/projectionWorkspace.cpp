@@ -1,8 +1,20 @@
 #include <ProjectionWorkspace.H>
 
-ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const int n_comp, const int n_ghost, const int max_grid_size_tagging, const int n_look_in)
-    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, n_comp, n_ghost), n_lookup(n_look_in), lgf_poisson_solver(geom_in, n_look_in)
+ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig config)
+    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, config), lgf_poisson_solver(geom_in, config.n_lookup)
 {
+    // initializing required solver parameters
+    n_lookup = config.n_lookup;
+    rk_order = config.rk_order;
+    Re = config.Re;
+    cfl = config.cfl;
+    source_tag_thresh = config.source_tag_thresh;
+
+    // copying parameters necessary for constructor only
+    int n_comp = config.n_comp;
+    int n_ghost = config.n_ghost;
+    int max_grid_size_tagging = config.max_grid_size_tagging;
+
     ba_fine = amrex::BoxArray(geom.Domain());
     ba_fine.maxSize(max_grid_size_tagging);
     dm_fine.define(ba_fine);
@@ -46,7 +58,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     divU_at_end_max_norm = 0.0;
 }
 
-amrex::Real ProjectionWorkspace::computeDt(const FlowField& state, amrex::Real cfl, amrex::Real Re)
+amrex::Real ProjectionWorkspace::computeDt(const FlowField& state)
 {
     const amrex::Geometry& geom = state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
@@ -86,7 +98,7 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state, amrex::Real c
     return amrex::min(dt_adv, dt_diff);
 }
 
-void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real Re, amrex::Real source_tag_thresh)
+void ProjectionWorkspace::initializePresField(FlowField& init_state)
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
@@ -94,7 +106,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     init_state.getDivU().setVal(0.0);
     init_state.getPres().setVal(0.0);
 
-    computeMomentumFluxes(init_state, Re);
+    computeMomentumFluxes(init_state);
 
     // compute divergence of rhs_vel and store in divU
     const amrex::Geometry& geom = init_state.getGeom();
@@ -157,13 +169,16 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, amrex::Real
     divU_at_end_max_norm = init_state.getDivUAtEnd().norm0(0, 0, false);
 }
 
-void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage, amrex::Real Re)
+void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computeKEFluxes()");
     // compute the right hand side of the KE evolution equations along x,y,z
     // at the given stage discretized using a second order finite difference
     // KEP scheme as outlined in Morinish et. al.
 
+    // function's copy of Re to be passed to GPU lambdas
+    amrex::Real Re_temp = Re;
+    
     // extracting physical dx for computations
     const amrex::Geometry& geom = stage.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
@@ -203,18 +218,18 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& stage, amrex::Rea
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<0>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re);
+                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<0>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
                 }
             #if AMREX_SPACEDIM >= 2
                 else if (idim == 1) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<1>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re);
+                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<1>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
                 }
             #endif
             #if AMREX_SPACEDIM == 3
                 else if (idim == 2) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<2>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re);
+                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<2>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
                 }
             #endif
             });
@@ -286,7 +301,7 @@ void ProjectionWorkspace::compareKE(const FlowField& state_n)
     }
 }
 
-void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage, amrex::Real Re)
+void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computeMomentumFluxes()");
     // compute the right hand side which is of the form 1/Re(laplacian(u)) -
@@ -297,6 +312,9 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage, amrex::R
     // extracting physical dx for computations
     const amrex::Geometry& geom = stage.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+
+    // local copy of Re for passing to GPU lambdas
+    amrex::Real Re_temp = Re;
 
     // for each velocity direction, rhs is computed accordingly
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -318,18 +336,18 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& stage, amrex::R
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs(i,j,k) = morinishiFlux<0>(i, j, k, vel_arr, pres_arr, dx, Re);
+                    rhs(i,j,k) = morinishiFlux<0>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
                 }
             #if AMREX_SPACEDIM >= 2
                 else if (idim == 1) 
                 {
-                    rhs(i,j,k) = morinishiFlux<1>(i, j, k, vel_arr, pres_arr, dx, Re);
+                    rhs(i,j,k) = morinishiFlux<1>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
                 }
             #endif
             #if AMREX_SPACEDIM == 3
                 else if (idim == 2) 
                 {
-                    rhs(i,j,k) = morinishiFlux<2>(i, j, k, vel_arr, pres_arr, dx, Re);
+                    rhs(i,j,k) = morinishiFlux<2>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
                 }
             #endif
             });
@@ -356,7 +374,7 @@ void ProjectionWorkspace::predictVelocity(const FlowField& state_n, FlowField& s
     stage.setBoundary();
 }
 
-void ProjectionWorkspace::computePressure(FlowField& stage, amrex::Real source_tag_thresh)
+void ProjectionWorkspace::computePressure(FlowField& stage)
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
@@ -485,7 +503,7 @@ void ProjectionWorkspace::correctVelocityandPressure(FlowField& stage, amrex::Re
     divU_at_end_max_norm = stage.getDivUAtEnd().norm0(0, 0, false);
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, amrex::Real Re, int rk_order, amrex::Real source_tag_thresh)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -506,13 +524,13 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
 
         // performing KE evolution routine
         // compute and store KE fluxes in workspace
-        computeKECompFluxes(stage, Re);
+        computeKECompFluxes(stage);
 
         // evolve KE and store back in stage
         evolveKE(state_n, stage, dt, alpha, beta, gamma);
 
         // compute and store fluxes in workspace
-        computeMomentumFluxes(stage, Re);
+        computeMomentumFluxes(stage);
 
         // compute predicted velocity without divergence free condition store
         // predicted velocity within stage
@@ -521,7 +539,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, amrex::Real dt, am
         // find divergence of predicted velocity, store in workspace use custom
         // LGF solver to find pressure correction delta update pressure stored
         // in stage
-        computePressure(stage, source_tag_thresh);
+        computePressure(stage);
 
         // use pressure to compute velocity correction store correction in
         // workspace

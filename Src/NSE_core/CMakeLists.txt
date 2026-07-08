@@ -5,7 +5,8 @@ add_library(NSE_core_lib STATIC
                 FlowField.H
                 ProjectionWorkspace.H
                 RKCoefficients.H
-                SpatialDiscretization.H)
+                SpatialDiscretization.H
+                SolverConfig.H)
 
 # Use AMReX macro for cuda compilation using CMake                
 if(AMReX_GPU_BACKEND STREQUAL "CUDA")

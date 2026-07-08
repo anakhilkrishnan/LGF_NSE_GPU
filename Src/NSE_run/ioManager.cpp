@@ -1,6 +1,6 @@
 #include <IOManager.H>
 
-IOManager::IOManager(const SimConfig& config) : cfg(config)
+IOManager::IOManager(const IOConfig& config) : cfg(config)
 {
     better_dir = "";
 }

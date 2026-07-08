@@ -10,8 +10,12 @@ struct DummyFillExtDir
                      const int /*orig_comp*/) const {}
 };
 
-FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int n_comp, const int n_ghost)
+FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig config)
 {
+    // copy info from config
+    int n_comp = config.n_comp;
+    int n_ghost = config.n_ghost;
+
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         // convert the box array to face centered

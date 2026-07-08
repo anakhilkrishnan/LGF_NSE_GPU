@@ -8,6 +8,8 @@
 #include <AMReX_Math.H>
 #include <AMReX_Array.H>
 
+#include <SolverConfig.H>
+
 using namespace amrex;
 
 class FlowField 
@@ -22,7 +24,7 @@ class FlowField
         amrex::Geometry globalgeom;
 
     public:
-        FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int n_comp, const int n_ghost);
+        FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig config);
         FlowField(const FlowField& other);
         FlowField& operator=(const FlowField& other);
     
