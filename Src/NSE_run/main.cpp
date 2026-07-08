@@ -33,7 +33,6 @@ void extendedMain()
     // creating timestepping variables beforehand
     amrex::Real time = 0.0;
     int step = 0;
-    amrex::Real dt = 0.0;
 
     // creating domain data objects
     amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
@@ -99,7 +98,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, ba, dm, geom);
+        io.writeMyPlotFile(step, time, state_n, state_n.getDivU(), ba, dm, geom);
 
     }
 
@@ -116,7 +115,7 @@ void extendedMain()
     // tracking solver initialization time, from the moment 
     auto init_stop_time = amrex::second();
     auto init_duration = init_stop_time - overall_start_time;
-    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt 
+    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << workspace.dt 
                     << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                     << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
 
@@ -139,14 +138,14 @@ void extendedMain()
         workspace.advanceTimeStep(state_n);
 
         // update counters
-        time += dt;
+        time += workspace.dt;
         step++;
 
         //  plot in specified intervals
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, ba, dm, geom);
+            io.writeMyPlotFile(step, time, state_n, state_n.getDivU(), ba, dm, geom);
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
@@ -163,7 +162,7 @@ void extendedMain()
         auto step_duration = step_stop_time - step_start_time;
 
         // print to terminal each timestep
-        amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt 
+        amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << workspace.dt 
                         << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                         << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
     }

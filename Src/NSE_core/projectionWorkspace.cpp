@@ -50,16 +50,20 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
         global_kecomp_err[idim] = 0.0;
     }
 
-    // initialize corr_pres upon creation
-    corr_pres.define(ba, dm, n_comp, n_ghost);
-    corr_pres.setVal(0.0);
+    // initialize pres_corr upon creation
+    pres_corr.define(ba, dm, n_comp, n_ghost);
+    pres_corr.setVal(0.0);
 
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
+
+    dt = 0.0;
 }
 
 void ProjectionWorkspace::computeDt(const FlowField& state)
 {
+    BL_PROFILE("<Compute> computeDt()");
+
     const amrex::Geometry& geom = state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
@@ -378,28 +382,8 @@ void ProjectionWorkspace::computePressure()
 {
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
-    // extracting physical dx for computations
-    const amrex::Geometry& geom = stage.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
-
-    // set divU to 0.0 and store fresh data
-    stage.getDivU().setVal(0.0);
-
-    // compute divU and store in stage
-    for(amrex::MFIter mfi(stage.getDivU(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& divU_arr = stage.getDivU().array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-        {
-            vel_arr[d] = stage.getVel(d).const_array(mfi);
-        }
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            divU_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
-        });
-    }
+    // compute divU and store back into stage
+    computeDivU(stage.getDivU(), stage);
 
     // copy divU into the fine MultiFab for efficient tagging
     divU_fine.ParallelCopy(stage.getDivU(), 0, 0, 1, 0, 0);
@@ -410,12 +394,12 @@ void ProjectionWorkspace::computePressure()
     tagSource(box_tag_arr, divU_fine, source_tag_thresh);
 
     // performing addition of box values 
-    lgf_poisson_solver.solvePoisson(divU_fine, corr_pres, box_tag_arr);
+    lgf_poisson_solver.solvePoisson(divU_fine, pres_corr, box_tag_arr);
     
     // write out divU_max_norm
     divU_max_norm = stage.getDivU().norm0(0, 0, false);
 
-    corr_pres.FillBoundary(geom.periodicity());
+    pres_corr.FillBoundary(geom.periodicity());
 }
 
 void ProjectionWorkspace::computeVelocityCorrection()
@@ -432,7 +416,7 @@ void ProjectionWorkspace::computeVelocityCorrection()
         {
             const amrex::Box& bx = mfi.tilebox();
             
-            auto const& corr_pres_arr = corr_pres.const_array(mfi);
+            auto const& pres_corr_arr = pres_corr.const_array(mfi);
             auto const& rhs_corr = rhs_vel_corr[idim].array(mfi);
 
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -441,18 +425,18 @@ void ProjectionWorkspace::computeVelocityCorrection()
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs_corr(i,j,k) = discreteGradient<0>(i, j, k, corr_pres_arr, dx);
+                    rhs_corr(i,j,k) = discreteGradient<0>(i, j, k, pres_corr_arr, dx);
                 }
                 #if AMREX_SPACEDIM >= 2
                     else if (idim == 1) 
                     {
-                        rhs_corr(i,j,k) = discreteGradient<1>(i, j, k, corr_pres_arr, dx);
+                        rhs_corr(i,j,k) = discreteGradient<1>(i, j, k, pres_corr_arr, dx);
                     }
                 #endif
                 #if AMREX_SPACEDIM == 3
                     else if (idim == 2) 
                     {
-                        rhs_corr(i,j,k) = discreteGradient<2>(i, j, k, corr_pres_arr, dx);
+                        rhs_corr(i,j,k) = discreteGradient<2>(i, j, k, pres_corr_arr, dx);
                     }
                 #endif
             });
@@ -473,7 +457,7 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
 
     // updating pressure to reflect base state + corrected
     amrex::Real gam_by_dt = gamma/dt;
-    amrex::MultiFab::Saxpy(stage.getPres(), gam_by_dt, corr_pres, 0, 0, stage.getPres().nComp(), stage.getPres().nGrow());
+    amrex::MultiFab::Saxpy(stage.getPres(), gam_by_dt, pres_corr, 0, 0, stage.getPres().nComp(), stage.getPres().nGrow());
 
     // fill ghost cells and physical BCs
     stage.setBoundary();
@@ -564,11 +548,11 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
 
 // function to compute cell-centered vorticity from staggered flowfield for
 // plotting
-amrex::MultiFab computeCellCenteredVorticity(const FlowField& state)
+amrex::MultiFab computePlotVorticity(const FlowField& state)
 {
-    BL_PROFILE("computeCellCenteredVorticity()");
+    BL_PROFILE("computePlotVorticity()");
 
-    // get geometry and grid info using your safely encapsulated getter!
+    // get geometry and grid info using your safely encapsulated getter
     const amrex::Geometry& geom = state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
@@ -627,4 +611,42 @@ amrex::MultiFab computeCellCenteredVorticity(const FlowField& state)
     }
 
     return vort;
+}
+
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
+{
+    BL_PROFILE("<Compute> computeDivU()");
+
+    // set divU to 0.0 and store fresh data
+    output_divU.setVal(0.0);
+    
+    // extracting physical dx for computations
+    const amrex::Geometry& geom = input_state.getGeom();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+
+    // compute divU and store in input_state
+    for(amrex::MFIter mfi(output_divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& divU_arr = output_divU.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+        {
+            vel_arr[d] = input_state.getVel(d).const_array(mfi);
+        }
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            divU_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
+        });
+    }
+}
+
+// function to compute and RETURN divU for plotting divU_at_end
+amrex::MultiFab computePlotDivU(const FlowField& state)
+{
+    // thin wrapper for plot convenience
+    MultiFab out(state.getPres().boxArray(), state.getPres().DistributionMap(), 1, 0);
+    computeDivU(out, state);
+
+    return out;
 }

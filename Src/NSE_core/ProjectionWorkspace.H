@@ -18,7 +18,9 @@
 using namespace amrex;
 
 // free functions for convenience/plotting
-amrex::MultiFab computeCellCenteredVorticity(const FlowField& state);
+amrex::MultiFab computePlotVorticity(const FlowField& state);
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
+amrex::MultiFab computePlotDivU(const FlowField& state);
 
 class ProjectionWorkspace
 {
@@ -33,9 +35,6 @@ class ProjectionWorkspace
 
         directSumLGF lgf_poisson_solver;
 
-        // variables that are updated continouosly 
-        amrex::Real dt;
-
         FlowField stage;
         
         amrex::Geometry geom;
@@ -45,19 +44,21 @@ class ProjectionWorkspace
         amrex::DistributionMapping dm_fine;
 
         // scratch space type data
+        amrex::Gpu::DeviceVector<int> box_tag_arr;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
-        amrex::MultiFab corr_pres;
+        amrex::MultiFab pres_corr;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
-
-        amrex::Gpu::DeviceVector<int> box_tag_arr;
 
         amrex::MultiFab divU_fine;
         amrex::MultiFab tagRegion_fine;
 
     public: 
+
+        amrex::Real dt;
+
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
         amrex::Real divU_max_norm;

@@ -141,7 +141,7 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
-void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom)
+void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom)
 {
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
@@ -161,9 +161,9 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
     
     amrex::MultiFab::Copy(plotFab, state.getPres(), 0, AMREX_SPACEDIM, 1, 0); 
     amrex::MultiFab::Copy(plotFab, state.getTagRegion(), 0, AMREX_SPACEDIM + 1, 1, 0);
-    amrex::MultiFab::Copy(plotFab, state.getDivU(), 0, AMREX_SPACEDIM + 2, 1, 0);
-    amrex::MultiFab::Copy(plotFab, state.getDivUAtEnd(), 0, AMREX_SPACEDIM + 3, 1, 0);
-    amrex::MultiFab::Copy(plotFab, computeCellCenteredVorticity(state), 0, AMREX_SPACEDIM + 4, ncomp_vort, 0);
+    amrex::MultiFab::Copy(plotFab, divU_star, 0, AMREX_SPACEDIM + 2, 1, 0);
+    amrex::MultiFab::Copy(plotFab, computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0);
+    amrex::MultiFab::Copy(plotFab, computePlotVorticity(state), 0, AMREX_SPACEDIM + 4, ncomp_vort, 0);
 
 
     // exporting the names of the MultiFabs

@@ -28,7 +28,7 @@ class FlowField
         FlowField(const FlowField& other);
         FlowField& operator=(const FlowField& other);
     
-        // retrieves corresponding dimension's velocity
+        // fetch functions for private data
         amrex::MultiFab& getVel(int idim);
         const amrex::MultiFab& getVel(int idim) const;
         amrex::MultiFab& getKEComp(int idim);
