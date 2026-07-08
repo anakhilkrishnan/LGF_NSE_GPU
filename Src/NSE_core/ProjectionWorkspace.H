@@ -52,14 +52,17 @@ class ProjectionWorkspace
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
 
+        
         amrex::MultiFab divU_fine;
-        amrex::MultiFab tagRegion_fine;
 
     public: 
 
         amrex::Real dt;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
+
+        amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
+        amrex::MultiFab tagRegion_fine; // kept public for plotting
 
         amrex::Real divU_max_norm;
         amrex::Real divU_at_end_max_norm;
@@ -85,7 +88,8 @@ class ProjectionWorkspace
         void computeVelocityCorrection();
         void correctVelocityandPressure(amrex::Real gamma);
 
-        void computeDt(const FlowField& state);
+        void computeDt(const FlowField& state_n);
+        amrex::Real computeDivUMaxNorm(const FlowField& input_state);
         void advanceTimeStep(FlowField& state_n);
 };
 

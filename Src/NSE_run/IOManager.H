@@ -57,7 +57,7 @@ class IOManager
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state);
         void initializeBAFromChk(int& step, amrex::Real& time, amrex::BoxArray& ba);
         void initializeFlowFieldFromChk(FlowField& init_state);
-        void writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom);
+        void writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const MultiFab& tagRegion, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom);
         void writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         void initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         

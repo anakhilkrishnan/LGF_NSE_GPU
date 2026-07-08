@@ -98,7 +98,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, state_n.getDivU(), ba, dm, geom);
+        io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, ba, dm, geom);
 
     }
 
@@ -145,7 +145,7 @@ void extendedMain()
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, state_n.getDivU(), ba, dm, geom);
+            io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, ba, dm, geom);
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints

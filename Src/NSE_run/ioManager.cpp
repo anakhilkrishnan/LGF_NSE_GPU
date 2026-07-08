@@ -141,16 +141,16 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
-void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom)
+void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const MultiFab& tagRegion, const amrex::BoxArray ba, const amrex::DistributionMapping dm, const amrex::Geometry& geom)
 {
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
-    int ncomp_plot = AMREX_SPACEDIM + ncomp_vort + 4 ;
+    int ncomp_plot = AMREX_SPACEDIM + ncomp_vort + 4;
 
     // building a multiFab with n dim + 2 components for plotting
-   amrex::MultiFab plotFab(ba, dm, ncomp_plot, 0);
+    amrex::MultiFab plotFab(ba, dm, ncomp_plot, 0);
 
-   // converting face-centered data to cell-centered data
+    // converting face-centered data to cell-centered data
     #if AMREX_SPACEDIM == 1
         amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0)});
     #elif AMREX_SPACEDIM == 2
@@ -159,12 +159,11 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
         amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0), &state.getVel(1), &state.getVel(2)});
     #endif
     
-    amrex::MultiFab::Copy(plotFab, state.getPres(), 0, AMREX_SPACEDIM, 1, 0); 
-    amrex::MultiFab::Copy(plotFab, state.getTagRegion(), 0, AMREX_SPACEDIM + 1, 1, 0);
+    amrex::MultiFab::Copy(plotFab, state.getPres(), 0, AMREX_SPACEDIM, 1, 0);
+    plotFab.ParallelCopy(tagRegion, 0, AMREX_SPACEDIM + 1, 1, 0, 0);
     amrex::MultiFab::Copy(plotFab, divU_star, 0, AMREX_SPACEDIM + 2, 1, 0);
     amrex::MultiFab::Copy(plotFab, computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0);
     amrex::MultiFab::Copy(plotFab, computePlotVorticity(state), 0, AMREX_SPACEDIM + 4, ncomp_vort, 0);
-
 
     // exporting the names of the MultiFabs
     amrex::Vector<std::string> varnames = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"), "pressure", "active_box_tag", "divU", "divUAtEnd"};
@@ -204,8 +203,6 @@ void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspac
         ofs << "\n";
         ofs.close();
     }
-
-
 }
 
 void IOManager::initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)

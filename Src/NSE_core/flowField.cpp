@@ -34,17 +34,6 @@ FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, con
     pres.define(ba, dm, n_comp, n_ghost);
     pres.setVal(0.0);
 
-    // initialize tagging regions
-    tagRegion.define(ba, dm, n_comp, n_ghost);
-    tagRegion.setVal(0.0);
-
-    // initialize divU upon creation
-    divU.define(ba, dm, n_comp, n_ghost);
-    divU.setVal(0.0);
-
-    divU_at_end.define(ba, dm, n_comp, n_ghost);
-    divU_at_end.setVal(0.0);
-
     globalgeom = geom;
 }
 
@@ -69,15 +58,6 @@ FlowField::FlowField(const FlowField& other)
     pres.define(other.pres.boxArray(), other. pres.DistributionMap(), other.pres.nComp(), other.pres.nGrow());
     amrex::MultiFab::Copy(pres, other.pres, 0, 0, pres.nComp(), pres.nGrow());
 
-    tagRegion.define(other.tagRegion.boxArray(), other.tagRegion.DistributionMap(), other.tagRegion.nComp(), other.tagRegion.nGrow());
-    amrex::MultiFab::Copy(tagRegion, other.tagRegion, 0, 0, tagRegion.nComp(), tagRegion.nGrow());
-
-    divU.define(other.divU.boxArray(), other.divU.DistributionMap(), other.divU.nComp(), other.divU.nGrow());
-    amrex::MultiFab::Copy(divU, other.divU, 0, 0, divU.nComp(), divU.nGrow());
-    
-    divU_at_end.define(other.divU_at_end.boxArray(), other.divU_at_end.DistributionMap(), other.divU_at_end.nComp(), other.divU_at_end.nGrow());
-    amrex::MultiFab::Copy(divU_at_end, other.divU_at_end, 0, 0, divU_at_end.nComp(), divU_at_end.nGrow());
-
     globalgeom = other.globalgeom;
 }
 
@@ -91,9 +71,6 @@ FlowField& FlowField::operator=(const FlowField& other)
         }
         
         amrex::MultiFab::Copy(pres, other.pres, 0, 0, pres.nComp(), pres.nGrow());
-        amrex::MultiFab::Copy(tagRegion, other.tagRegion, 0, 0, tagRegion.nComp(), tagRegion.nGrow());
-        amrex::MultiFab::Copy(divU, other.divU, 0, 0, divU.nComp(), divU.nGrow());
-        amrex::MultiFab::Copy(divU_at_end, other.divU_at_end, 0, 0, divU_at_end.nComp(), divU_at_end.nGrow());
         globalgeom = other.globalgeom;
     }
     return *this;
@@ -127,36 +104,6 @@ amrex::MultiFab& FlowField::getPres()
 const amrex::MultiFab& FlowField::getPres() const 
 {
     return pres; 
-}
-
-amrex::MultiFab& FlowField::getTagRegion() 
-{
-    return tagRegion; 
-}
-
-const amrex::MultiFab& FlowField::getTagRegion() const 
-{
-    return tagRegion; 
-}
-
-amrex::MultiFab& FlowField::getDivU() 
-{
-    return divU; 
-}
-
-const amrex::MultiFab& FlowField::getDivU() const 
-{
-    return divU; 
-}
-
-amrex::MultiFab& FlowField::getDivUAtEnd() 
-{
-    return divU_at_end; 
-}
-
-const amrex::MultiFab& FlowField::getDivUAtEnd() const 
-{
-    return divU_at_end; 
 }
 
 const amrex::Geometry& FlowField::getGeom() const 

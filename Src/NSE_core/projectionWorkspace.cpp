@@ -54,30 +54,34 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     pres_corr.define(ba, dm, n_comp, n_ghost);
     pres_corr.setVal(0.0);
 
+    // initialize divU upon creation
+    divU.define(ba, dm, n_comp, n_ghost);
+    divU.setVal(0.0);
+
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
 
     dt = 0.0;
 }
 
-void ProjectionWorkspace::computeDt(const FlowField& state)
+void ProjectionWorkspace::computeDt(const FlowField& state_n)
 {
     BL_PROFILE("<Compute> computeDt()");
 
-    const amrex::Geometry& geom = state.getGeom();
+    const amrex::Geometry& geom = state_n.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
     // cfl constraint: advective limit on dt
-    amrex::Real u_max = state.getVel(0).norm0(0, 0, false);
+    amrex::Real u_max = state_n.getVel(0).norm0(0, 0, false);
     amrex::Real adv_metric = u_max / dx[0];
 
     #if AMREX_SPACEDIM >= 2
-        amrex::Real v_max = state.getVel(1).norm0(0, 0, false);
+        amrex::Real v_max = state_n.getVel(1).norm0(0, 0, false);
         adv_metric += v_max / dx[1];
     #endif
 
     #if AMREX_SPACEDIM == 3
-        amrex::Real w_max = state.getVel(2).norm0(0, 0, false);
+        amrex::Real w_max = state_n.getVel(2).norm0(0, 0, false);
         adv_metric += w_max / dx[2];
     #endif
 
@@ -102,12 +106,56 @@ void ProjectionWorkspace::computeDt(const FlowField& state)
     dt = amrex::min(dt_adv, dt_diff);
 }
 
+amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state)
+{
+    BL_PROFILE("<Compute> computeDivUMaxNorm()");
+
+    // function to reduce state directly into divUMaxNorm
+    // called at appropriate locations to differentiate divU_star
+    // and divU_at_end
+
+    amrex::ReduceOps<amrex::ReduceOpMax> reduce_op;
+    amrex::ReduceData<amrex::Real> reduce_data(reduce_op);
+    using ReduceTuple = typename decltype(reduce_data)::Type;
+
+    // grid spacing for the stencil
+    const auto dxinv = geom.InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
+
+    // You reduce over CELL-centered boxes (divergence is cell-centered),
+    // so iterate something cell-centered — e.g. the pressure MultiFab —
+    // to get the right box/loop domain, and read the face velocities into it.
+    for (amrex::MFIter mfi(input_state.getPres()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.validbox();
+
+        AMREX_D_TERM(auto const& u = input_state.getVel(0).const_array(mfi);,
+                    auto const& v = input_state.getVel(1).const_array(mfi);,
+                    auto const& w = input_state.getVel(2).const_array(mfi);)
+
+        reduce_op.eval(bx, reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+            {
+                // discrete divergence at cell (i,j,k) from surrounding faces
+                amrex::Real div =
+                    AMREX_D_TERM(  (u(i+1,j,k) - u(i,j,k)) * dxinv[0],
+                                + (v(i,j+1,k) - v(i,j,k)) * dxinv[1],
+                                + (w(i,j,k+1) - w(i,j,k)) * dxinv[2] );
+                return { amrex::Math::abs(div) };
+            });
+    }
+
+    amrex::Real max_div = amrex::get<0>(reduce_data.value());
+    amrex::ParallelDescriptor::ReduceRealMax(max_div);
+    
+    return max_div;
+}
+
 void ProjectionWorkspace::initializePresField(FlowField& init_state)
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
     // set value to 0.0 and store fresh
-    init_state.getDivU().setVal(0.0);
+    divU.setVal(0.0);
     init_state.getPres().setVal(0.0);
 
     computeMomentumFluxes(init_state);
@@ -116,10 +164,10 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
     const amrex::Geometry& geom = init_state.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
-    for(amrex::MFIter mfi(init_state.getDivU(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    for(amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
-        auto const& div_arr = init_state.getDivU().array(mfi);
+        auto const& div_arr = divU.array(mfi);
         
         amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> rhs_arr;
         for(int d = 0; d < AMREX_SPACEDIM; ++d)
@@ -134,13 +182,17 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
         });
     }
 
+    // copy divU into the fine MultiFab for efficient tagging
+    divU_fine.setVal(0.0);
+    divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
+
     // solving the poisson equation to get correct pressure initial conditions
     // force solver to tag more cells by providing source_tag_thresh*1e-2
-    tagSource(box_tag_arr, init_state.getDivU(), (source_tag_thresh*0.01));
-    lgf_poisson_solver.solvePoisson(init_state.getDivU(), init_state.getPres(), box_tag_arr);
+    tagSource(box_tag_arr, divU_fine, (source_tag_thresh*0.01));
+    lgf_poisson_solver.solvePoisson(divU_fine, init_state.getPres(), box_tag_arr);
 
     // write out divU_max_norm
-    divU_max_norm = init_state.getDivU().norm0(0, 0, false);
+    divU_max_norm = divU.norm0(0, 0, false);
 
     // export tagging data into plotting multifab
     for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
@@ -149,28 +201,8 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 
-    init_state.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
-
-    // compute divU_at_end
-    for(amrex::MFIter mfi(init_state.getDivUAtEnd(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& divU_at_end_arr = init_state.getDivUAtEnd().array(mfi);
-
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-        {
-            vel_arr[d] = init_state.getVel(d).const_array(mfi);
-        }
-
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            divU_at_end_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
-        });
-    }
-
     // write out divU_at_end_max_norm
-    divU_at_end_max_norm = init_state.getDivUAtEnd().norm0(0, 0, false);
+    divU_at_end_max_norm = computeDivUMaxNorm(init_state);
 }
 
 void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
@@ -383,10 +415,11 @@ void ProjectionWorkspace::computePressure()
     BL_PROFILE("<Compute> advanceTimeStep(): computePressure()");
 
     // compute divU and store back into stage
-    computeDivU(stage.getDivU(), stage);
+    computeDivU(divU, stage);
 
     // copy divU into the fine MultiFab for efficient tagging
-    divU_fine.ParallelCopy(stage.getDivU(), 0, 0, 1, 0, 0);
+    divU_fine.setVal(0.0);
+    divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
 
     // use the custom lgf solver to compute the pressure at the next time step
     // running the tagging algorithmn and obtaining the box tags as an array of
@@ -397,7 +430,7 @@ void ProjectionWorkspace::computePressure()
     lgf_poisson_solver.solvePoisson(divU_fine, pres_corr, box_tag_arr);
     
     // write out divU_max_norm
-    divU_max_norm = stage.getDivU().norm0(0, 0, false);
+    divU_max_norm = divU.norm0(0, 0, false);
 
     pres_corr.FillBoundary(geom.periodicity());
 }
@@ -467,24 +500,8 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
     const amrex::Geometry& geom = stage.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
-    // compute divU_at_end
-    for(amrex::MFIter mfi(stage.getDivUAtEnd(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& divU_at_end_arr = stage.getDivUAtEnd().array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-        {
-            vel_arr[d] = stage.getVel(d).const_array(mfi);
-        }
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            divU_at_end_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
-        });
-    }
-
     // write out divU_at_end_max_norm
-    divU_at_end_max_norm = stage.getDivUAtEnd().norm0(0, 0, false);
+    divU_at_end_max_norm = computeDivUMaxNorm(stage);
 }
 
 void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
@@ -540,8 +557,6 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
         const amrex::Real v = (lgf_poisson_solver.h_source_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
         tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
-
-    stage.getTagRegion().ParallelCopy(tagRegion_fine, 0, 0, 1, 0, 0);
 
     state_n = stage;
 }
