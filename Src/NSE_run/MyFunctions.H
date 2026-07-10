@@ -22,6 +22,5 @@
 using namespace amrex;
 
 void extendedMain();
-void initializeVelField(FlowField& init_state);
 
 #endif

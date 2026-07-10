@@ -14,6 +14,11 @@
 #include <SpatialDiscretization.H>
 #include <directSumLGF.H>
 
+// free function: this must be defined in NSE_run
+void initializeVelField(FlowField& init_state);
+
+// IMPORTANT: At present, domainManager is wired up for 2D, see vorticity
+// management (in both tagging and vort2vel)
 class DomainManager
 {
     private:
@@ -44,7 +49,7 @@ class DomainManager
 
         // primary functionality
         DomainManager(const SolverConfig& config);
-        void tagSupportRegion(const FlowField& state, const MultiFab& divU_fine);
+        void tagSupportRegion(const FlowField& state);
         void initializeSnugDomain();
         int computeRegridInterval(const FlowField& state) const ;
         void updateSnugDomain(const FlowField& state);

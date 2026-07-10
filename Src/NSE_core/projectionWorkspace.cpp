@@ -613,6 +613,13 @@ amrex::MultiFab computePlotVorticity(const FlowField& state)
     return vort;
 }
 
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
+{
+    BL_PROFILE("computeDivNonLinearTerm()");
+
+    
+}
+
 void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
 {
     BL_PROFILE("<Compute> computeDivU()");
