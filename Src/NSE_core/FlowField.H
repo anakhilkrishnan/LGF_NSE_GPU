@@ -23,20 +23,22 @@ class FlowField
         amrex::MultiFab pres;
 
     public:
-        FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig config);
+        FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig& config);
         FlowField(const FlowField& other);
         FlowField& operator=(const FlowField& other);
     
         // fetch functions for private data
-        const amrex::Geometry& getGeom() const;
-        amrex::MultiFab& getVel(int idim);
-        const amrex::MultiFab& getVel(int idim) const;
-        amrex::MultiFab& getKEComp(int idim);
-        const amrex::MultiFab& getKEComp(int idim) const;
-        amrex::MultiFab& getPres();
-        const amrex::MultiFab& getPres() const;
+        const amrex::Geometry& getGeom() const { return globalgeom; }
+        amrex::MultiFab& getVel(int idim) { return vel[idim]; }
+        const amrex::MultiFab& getVel(int idim) const { return vel[idim]; }
+        amrex::MultiFab& getKEComp(int idim) { return kecomp[idim]; }
+        const amrex::MultiFab& getKEComp(int idim) const { return kecomp[idim]; }
+        amrex::MultiFab& getPres() { return pres; }
+        const amrex::MultiFab& getPres() const { return pres; }
 
+        // function to enforce physical BC's and copy across ghost cells, in one shot
         void setBoundary();
+        void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 
 #endif

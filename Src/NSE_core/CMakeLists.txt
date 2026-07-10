@@ -1,7 +1,9 @@
 # Define the library and its source files
 add_library(NSE_core_lib STATIC
+                domainManager.cpp
                 flowField.cpp
                 projectionWorkspace.cpp
+                DomainManager.H
                 FlowField.H
                 ProjectionWorkspace.H
                 RKCoefficients.H

@@ -32,73 +32,50 @@ void extendedMain()
 
     // creating timestepping variables beforehand
     amrex::Real time = 0.0;
+    amrex::Real dt_master = 0.0; // master, not to be confused with workspace.dt
     int step = 0;
 
-    // creating domain data objects
-    amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
-    amrex::IntVect dom_hi_iv(AMREX_D_DECL(sol_cfg.n_cell-1, sol_cfg.n_cell-1, sol_cfg.n_cell-1));
-    amrex::Box domain(dom_lo_iv, dom_hi_iv);
-
-    amrex::BoxArray ba;
-    // boxarray taken from ChkPoints if needed
-    if (io_cfg.start_from_chk)
-    {
-        io.initializeBAFromChk(step, time, ba);
-    }
-    else
-    {
-        ba.define(domain);
-        ba.maxSize(sol_cfg.max_grid_size);
-    }
+    // PENDING: setup checkpoint restart again with DomainManager
+    DomainManager dmgr(sol_cfg);
     
-    amrex::DistributionMapping dm(ba);
-
-    amrex::RealBox real_box(sol_cfg.dom_lo, sol_cfg.dom_hi);
-    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
-    amrex::Geometry geom(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
+    // extract correct region and update geom, boxarr and distmap
+    dmgr.initializeSnugDomain();
 
     // create flow field object
-    FlowField state_n(geom, ba, dm, sol_cfg);
+    FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
     // create solver object
-    ProjectionWorkspace workspace(geom, ba, dm, sol_cfg);
+    ProjectionWorkspace workspace(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
 
-    if (io_cfg.start_from_chk)
+    // starting from initial conditions
+    initializeVelField(state_n);
+
+    // fill ghost cells and apply physical BCs
+    state_n.setBoundary();
+
+    // populating pressure based on divergence of Navier-Stokes at initial conditions
+    workspace.initializePresField(state_n);
+
+    // populating KE comp arrays
+    workspace.computeKEFromState(state_n);
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        io.initializeFlowFieldFromChk(state_n);
-
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
+        amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
     }
-    else 
-    {
-        // starting from initial conditions
-        initializeVelField(state_n);
 
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
+    // fill ghost cells and apply physical BCs
+    state_n.setBoundary();
 
-        // populating pressure based on divergence of Navier-Stokes at initial conditions
-        workspace.initializePresField(state_n);
+    // TEMP: compute and set tagarr atleast once
+    dmgr.tagSupportRegion(state_n, workspace.divU_fine);
 
-        // populating KE comp arrays
-        workspace.computeKEFromState(state_n);
-        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-        {
-            amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
-        }
-
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
-
-        time = sol_cfg.t_start;
-        step = 0;
-    }
+    time = sol_cfg.t_start;
+    step = 0;
     
     // plotting initial conditions
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, ba, dm, geom);
+        io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
 
     }
 
@@ -115,7 +92,7 @@ void extendedMain()
     // tracking solver initialization time, from the moment 
     auto init_stop_time = amrex::second();
     auto init_duration = init_stop_time - overall_start_time;
-    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << workspace.dt 
+    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
                     << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                     << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
 
@@ -132,20 +109,21 @@ void extendedMain()
         }
 
         // always call computeDt() right before advanceTimeStep()
-        workspace.computeDt(state_n);
+        dt_master = workspace.computeDt(state_n);
+
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n);
+        workspace.advanceTimeStep(state_n, dt_master, dmgr.getSuppTagArr());
 
         // update counters
-        time += workspace.dt;
+        time += dt_master;
         step++;
 
         //  plot in specified intervals
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, ba, dm, geom);
+            io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
@@ -157,12 +135,21 @@ void extendedMain()
             writeMainChk = !writeMainChk;
         }
 
+        // update domain based on results from timestep
+        // CAN ALSO BE PLACED IN IF (step % regrid interval) for speed
+        if (step % dmgr.computeRegridInterval(state_n) == 0)
+        {
+            dmgr.updateSnugDomain(state_n);
+            state_n.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+        }
+
         // track duration of timestep
         auto step_stop_time = amrex::second();
         auto step_duration = step_stop_time - step_start_time;
 
         // print to terminal each timestep
-        amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << workspace.dt 
+        amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
                         << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                         << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
     }

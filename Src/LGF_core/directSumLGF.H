@@ -15,9 +15,6 @@ struct FabMetaData
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx;
 };
 
-// free tagSource function
-void tagSource(amrex::Gpu::DeviceVector<int>& box_tag_arr, const amrex::MultiFab& phi, const amrex::Real tag_thresh);
-
 class directSumLGF
 {
     private:

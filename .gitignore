@@ -16,4 +16,3 @@ out/
 
 # Ignore complete Exec directory, have it local for each machine
 /Exec/*
-

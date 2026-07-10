@@ -23,7 +23,7 @@ struct SolverConfig
 
     // physical parameters
     amrex::Real Re;
-    amrex::Real source_tag_thresh;
+    amrex::Real supp_tag_eps;
 
     // LGF kernel parameters
     int n_lookup;
@@ -47,7 +47,7 @@ struct SolverConfig
         pp.get("cfl", cfl);  
 
         pp.get("Re", Re);
-        pp.get("tagging_threshold", source_tag_thresh);
+        pp.get("support_threshold", supp_tag_eps);
 
         pp.get("n_lookup", n_lookup);
     }

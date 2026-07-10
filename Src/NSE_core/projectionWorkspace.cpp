@@ -1,23 +1,22 @@
 #include <ProjectionWorkspace.H>
 
-ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig config)
-    : geom(geom_in), ba(ba_in), dm(dm_in), stage(geom_in, ba_in, dm_in, config), lgf_poisson_solver(geom_in, config.n_lookup)
+ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config)
+    : stage(geom_in, ba_in, dm_in, config), lgf_poisson_solver(geom_in, config.n_lookup)
 {
     // initializing required solver parameters
     n_lookup = config.n_lookup;
     rk_order = config.rk_order;
     Re = config.Re;
     cfl = config.cfl;
-    source_tag_thresh = config.source_tag_thresh;
 
     // copying parameters necessary for constructor only
     int n_comp = config.n_comp;
     int n_ghost = config.n_ghost;
     int max_grid_size_tagging = config.max_grid_size_tagging;
 
-    ba_fine = amrex::BoxArray(geom.Domain());
+    amrex::BoxArray ba_fine(geom_in.Domain());
     ba_fine.maxSize(max_grid_size_tagging);
-    dm_fine.define(ba_fine);
+    amrex::DistributionMapping dm_fine(ba_fine);
 
     divU_fine.define(ba_fine, dm_fine, 1, 0);
     divU_fine.setVal(0.0);
@@ -28,14 +27,14 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         // convert the box array to face centered
-        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
+        amrex::BoxArray ba_face = amrex::convert(ba_in, amrex::IntVect::TheDimensionVector(idim));
 
         // declare the specific velocity component
-        rhs_vel[idim].define(ba_face, dm, n_comp, n_ghost);
-        rhs_vel_corr[idim].define(ba_face, dm, n_comp, n_ghost);
+        rhs_vel[idim].define(ba_face, dm_in, n_comp, n_ghost);
+        rhs_vel_corr[idim].define(ba_face, dm_in, n_comp, n_ghost);
 
-        rhs_kecomp[idim].define(ba_face, dm, n_comp, n_ghost);
-        kecomp_dir[idim].define(ba_face, dm, n_comp, n_ghost);
+        rhs_kecomp[idim].define(ba_face, dm_in, n_comp, n_ghost);
+        kecomp_dir[idim].define(ba_face, dm_in, n_comp, n_ghost);
 
         // initialize velocities upon creation
         rhs_vel[idim].setVal(0.0);
@@ -51,11 +50,11 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     }
 
     // initialize pres_corr upon creation
-    pres_corr.define(ba, dm, n_comp, n_ghost);
+    pres_corr.define(ba_in, dm_in, n_comp, n_ghost);
     pres_corr.setVal(0.0);
 
     // initialize divU upon creation
-    divU.define(ba, dm, n_comp, n_ghost);
+    divU.define(ba_in, dm_in, n_comp, n_ghost);
     divU.setVal(0.0);
 
     divU_max_norm = 0.0;
@@ -64,7 +63,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     dt = 0.0;
 }
 
-void ProjectionWorkspace::computeDt(const FlowField& state_n)
+amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
 {
     BL_PROFILE("<Compute> computeDt()");
 
@@ -103,10 +102,10 @@ void ProjectionWorkspace::computeDt(const FlowField& state_n)
     // 1/dx^2 + 1/dy^2 + 1/dz^2 )
     amrex::Real dt_diff = 0.5 * Re / diff_metric;
 
-    dt = amrex::min(dt_adv, dt_diff);
+    return amrex::min(dt_adv, dt_diff);
 }
 
-amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state)
+amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state) const
 {
     BL_PROFILE("<Compute> computeDivUMaxNorm()");
 
@@ -119,7 +118,7 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
     using ReduceTuple = typename decltype(reduce_data)::Type;
 
     // grid spacing for the stencil
-    const auto dxinv = geom.InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
+    const auto dxinv = input_state.getGeom().InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
 
     // You reduce over CELL-centered boxes (divergence is cell-centered),
     // so iterate something cell-centered — e.g. the pressure MultiFab —
@@ -186,9 +185,6 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
     divU_fine.setVal(0.0);
     divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
 
-    // solving the poisson equation to get correct pressure initial conditions
-    // force solver to tag more cells by providing source_tag_thresh*1e-2
-    tagSource(box_tag_arr, divU_fine, (source_tag_thresh*0.01));
     lgf_poisson_solver.solvePoisson(divU_fine, init_state.getPres(), box_tag_arr);
 
     // write out divU_max_norm
@@ -421,18 +417,13 @@ void ProjectionWorkspace::computePressure()
     divU_fine.setVal(0.0);
     divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
 
-    // use the custom lgf solver to compute the pressure at the next time step
-    // running the tagging algorithmn and obtaining the box tags as an array of
-    // 0s and 1s
-    tagSource(box_tag_arr, divU_fine, source_tag_thresh);
-
     // performing addition of box values 
     lgf_poisson_solver.solvePoisson(divU_fine, pres_corr, box_tag_arr);
     
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);
 
-    pres_corr.FillBoundary(geom.periodicity());
+    pres_corr.FillBoundary(stage.getGeom().periodicity());
 }
 
 void ProjectionWorkspace::computeVelocityCorrection()
@@ -504,7 +495,7 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
     divU_at_end_max_norm = computeDivUMaxNorm(stage);
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::Gpu::DeviceVector<int>& supp_tag_arr)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -512,6 +503,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
     // appropriate coefficients alpha, beta, gamma
 
     BL_PROFILE("<Compute> advanceTimeStep()");
+
+    // set member value using incoming dt and supp_tag_arr
+    dt = dt_in;
+    box_tag_arr = supp_tag_arr;
 
     stage = state_n;
     amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_order);
@@ -561,6 +556,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n)
     state_n = stage;
 }
 
+void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
+{
+
+}
 // function to compute cell-centered vorticity from staggered flowfield for
 // plotting
 amrex::MultiFab computePlotVorticity(const FlowField& state)

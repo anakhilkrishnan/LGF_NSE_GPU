@@ -12,6 +12,7 @@
 #include <string>
 
 #include <SolverConfig.H>
+#include <DomainManager.H>
 #include <IOConfig.H>
 #include <IOManager.H>
 #include <FlowField.H>

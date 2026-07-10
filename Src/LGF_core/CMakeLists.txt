@@ -1,6 +1,5 @@
 # Define the library and its source files
 add_library(LGF_core_lib STATIC
-    tagSource.cpp
     LGFKernels.H
     directSumKernel.H
     directSumLGF.H

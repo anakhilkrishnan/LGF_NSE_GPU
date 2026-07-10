@@ -15,7 +15,7 @@ t_stop = 10.0
 cfl = 0.5
 
 Re = 30000
-tagging_threshold = 1e-10
+support_threshold = 1e-10
 
 n_lookup = 32
 

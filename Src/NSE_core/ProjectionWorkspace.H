@@ -31,17 +31,12 @@ class ProjectionWorkspace
         int rk_order;
         amrex::Real cfl;
         amrex::Real Re;
-        amrex::Real source_tag_thresh;
+
+        amrex::Real dt;
 
         directSumLGF lgf_poisson_solver;
 
         FlowField stage;
-        
-        amrex::Geometry geom;
-        amrex::BoxArray ba;
-        amrex::DistributionMapping dm;
-        amrex::BoxArray ba_fine;
-        amrex::DistributionMapping dm_fine;
 
         // scratch space type data
         amrex::Gpu::DeviceVector<int> box_tag_arr;
@@ -53,15 +48,14 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
 
         
-        amrex::MultiFab divU_fine;
+        
 
     public: 
-
-        amrex::Real dt;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
         amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
+        amrex::MultiFab divU_fine;
         amrex::MultiFab tagRegion_fine; // kept public for plotting
 
         amrex::Real divU_max_norm;
@@ -70,7 +64,7 @@ class ProjectionWorkspace
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;
 
-        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig config);
+        ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config);
 
         // functions for initialization
         void initializePresField(FlowField& init_state);
@@ -88,9 +82,10 @@ class ProjectionWorkspace
         void computeVelocityCorrection();
         void correctVelocityandPressure(amrex::Real gamma);
 
-        void computeDt(const FlowField& state_n);
-        amrex::Real computeDivUMaxNorm(const FlowField& input_state);
-        void advanceTimeStep(FlowField& state_n);
+        amrex::Real computeDt(const FlowField& state_n) const;
+        amrex::Real computeDivUMaxNorm(const FlowField& input_state) const;
+        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::Gpu::DeviceVector<int>& supp_tag_arr);
+        void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 
 #endif

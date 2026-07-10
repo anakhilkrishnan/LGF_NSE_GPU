@@ -10,7 +10,7 @@ struct DummyFillExtDir
                      const int /*orig_comp*/) const {}
 };
 
-FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig config)
+FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const SolverConfig& config)
 {
     // copy info from config
     int n_comp = config.n_comp;
@@ -76,41 +76,6 @@ FlowField& FlowField::operator=(const FlowField& other)
     return *this;
 }
 
-amrex::MultiFab& FlowField::getVel(int idim) 
-{
-    return vel[idim]; 
-}
-
-const amrex::MultiFab& FlowField::getVel(int idim) const 
-{
-    return vel[idim]; 
-}
-
-amrex::MultiFab& FlowField::getKEComp(int idim) 
-{
-    return kecomp[idim]; 
-}
-
-const amrex::MultiFab& FlowField::getKEComp(int idim) const 
-{
-    return kecomp[idim]; 
-}
-
-amrex::MultiFab& FlowField::getPres() 
-{
-    return pres; 
-}
-
-const amrex::MultiFab& FlowField::getPres() const 
-{
-    return pres; 
-}
-
-const amrex::Geometry& FlowField::getGeom() const 
-{
-    return globalgeom; 
-}
-
 void FlowField::setBoundary()
 {
     // initializing BCRec object 1 dimension at a time
@@ -138,6 +103,11 @@ void FlowField::setBoundary()
 
     // update pressure fields
     pres.FillBoundary(globalgeom.periodicity());
+}
+
+void FlowField::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
+{
+
 }
 
     
