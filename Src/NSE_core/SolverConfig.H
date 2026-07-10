@@ -8,11 +8,17 @@
 struct SolverConfig
 {
     // grid parameters
+    // initial coarse search grid parameters
+    int n_cell_search;
+    int max_grid_size_search;
+    
+    // fine grid parameters
     int n_cell;
     int max_grid_size;
-    int max_grid_size_tagging;
     int n_ghost;
     int n_comp = 1;
+    int regrid_int = 5;
+    int n_buffer = 10;
     amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
 
     // time stepping parameters
@@ -32,11 +38,15 @@ struct SolverConfig
     {
         amrex::ParmParse pp;
 
+        pp.get("n_cell_search", n_cell_search);
+        pp.get("max_grid_size_search", max_grid_size_search);
+
         pp.get("n_cell", n_cell);
         pp.get("max_grid_size", max_grid_size);
-        pp.get("max_grid_size_tagging",max_grid_size_tagging);
         pp.get("n_ghost", n_ghost);
         pp.query("n_comp", n_comp);
+        pp.query("regrid_int", regrid_int);
+        pp.query("n_buffer", n_buffer);
         pp.get("domain_lo", dom_lo);
         pp.get("domain_hi", dom_hi);
 

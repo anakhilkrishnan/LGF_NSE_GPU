@@ -12,17 +12,6 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     // copying parameters necessary for constructor only
     int n_comp = config.n_comp;
     int n_ghost = config.n_ghost;
-    int max_grid_size_tagging = config.max_grid_size_tagging;
-
-    amrex::BoxArray ba_fine(geom_in.Domain());
-    ba_fine.maxSize(max_grid_size_tagging);
-    amrex::DistributionMapping dm_fine(ba_fine);
-
-    divU_fine.define(ba_fine, dm_fine, 1, 0);
-    divU_fine.setVal(0.0);
-
-    tagRegion_fine.define(ba_fine, dm_fine, 1, 0);
-    tagRegion_fine.setVal(0.0);
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
@@ -56,6 +45,11 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     // initialize divU upon creation
     divU.define(ba_in, dm_in, n_comp, n_ghost);
     divU.setVal(0.0);
+
+    // object that stores tagging data
+    // PENDING: to be moved to DomainManager
+    tagRegion_fine.define(ba_in, dm_in, 1, 0);
+    tagRegion_fine.setVal(0.0);
 
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
@@ -181,11 +175,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
         });
     }
 
-    // copy divU into the fine MultiFab for efficient tagging
-    divU_fine.setVal(0.0);
-    divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
-
-    lgf_poisson_solver.solvePoisson(divU_fine, init_state.getPres(), box_tag_arr);
+    lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), box_tag_arr);
 
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);
@@ -413,12 +403,8 @@ void ProjectionWorkspace::computePressure()
     // compute divU and store back into stage
     computeDivU(divU, stage);
 
-    // copy divU into the fine MultiFab for efficient tagging
-    divU_fine.setVal(0.0);
-    divU_fine.ParallelCopy(divU, 0, 0, 1, 0, 0);
-
     // performing addition of box values 
-    lgf_poisson_solver.solvePoisson(divU_fine, pres_corr, box_tag_arr);
+    lgf_poisson_solver.solvePoisson(divU, pres_corr, box_tag_arr);
     
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);

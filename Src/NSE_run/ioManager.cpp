@@ -159,11 +159,11 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
         amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0), &state.getVel(1), &state.getVel(2)});
     #endif
     
-    amrex::MultiFab::Copy(plotFab, state.getPres(), 0, AMREX_SPACEDIM, 1, 0);
+    plotFab.ParallelCopy(state.getPres(), 0, AMREX_SPACEDIM, 1, 0, 0);
     plotFab.ParallelCopy(tagRegion, 0, AMREX_SPACEDIM + 1, 1, 0, 0);
-    amrex::MultiFab::Copy(plotFab, divU_star, 0, AMREX_SPACEDIM + 2, 1, 0);
-    amrex::MultiFab::Copy(plotFab, computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0);
-    amrex::MultiFab::Copy(plotFab, computePlotVorticity(state), 0, AMREX_SPACEDIM + 4, ncomp_vort, 0);
+    plotFab.ParallelCopy(divU_star, 0, AMREX_SPACEDIM + 2, 1, 0, 0);
+    plotFab.ParallelCopy(computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0, 0);
+    plotFab.ParallelCopy(computePlotVorticity(state), 0, AMREX_SPACEDIM + 4, ncomp_vort, 0, 0);
 
     // exporting the names of the MultiFabs
     amrex::Vector<std::string> varnames = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"), "pressure", "active_box_tag", "divU", "divUAtEnd"};

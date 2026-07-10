@@ -66,7 +66,7 @@ void extendedMain()
     state_n.setBoundary();
 
     // TEMP: compute and set tagarr atleast once
-    dmgr.tagSupportRegion(state_n, workspace.divU_fine);
+    dmgr.tagSupportRegion(state_n, workspace.divU);
 
     time = sol_cfg.t_start;
     step = 0;

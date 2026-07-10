@@ -55,8 +55,7 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
         amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
-        amrex::MultiFab divU_fine;
-        amrex::MultiFab tagRegion_fine; // kept public for plotting
+        amrex::MultiFab tagRegion_fine; // TEMP: to be shifted to DomainManager
 
         amrex::Real divU_max_norm;
         amrex::Real divU_at_end_max_norm;

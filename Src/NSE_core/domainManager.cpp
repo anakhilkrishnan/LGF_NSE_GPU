@@ -2,16 +2,18 @@
 
 DomainManager::DomainManager(const SolverConfig& config)
 {   
-    // ths build routine can either be temporary, or be used as the coarse
-    // search build step DECIDE ABOVE BEFORE PROCEEDING.
+    // at constructor call, a coarse mesh with 'search' params is created
+    // this facilictates the direct natural follow up of initializeSnugDomain();
+    // alternatively, by excluding the call to any of the functions, the solver
+    // can be run on the prespecified search grid.
 
     // creating domain data objects
     amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
-    amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell-1, config.n_cell-1, config.n_cell-1));
+    amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell_search-1, config.n_cell_search-1, config.n_cell_search-1));
     amrex::Box domain(dom_lo_iv, dom_hi_iv);
 
     ba.define(domain);
-    ba.maxSize(config.max_grid_size);
+    ba.maxSize(config.max_grid_size_search);
     
     dm.define(ba);
 
@@ -21,6 +23,8 @@ DomainManager::DomainManager(const SolverConfig& config)
 
     // initializing domain handling parameters
     supp_tag_eps = config.supp_tag_eps;
+    regrid_int = config.regrid_int; // TEMP tuning parameter for now
+    n_buffer = config.n_buffer;
 }
 
 void DomainManager::initializeSnugDomain()
@@ -28,20 +32,23 @@ void DomainManager::initializeSnugDomain()
     // create coarse multifab to store velocity and vorticity pass them for
     // tagging use tag information to update Geom, BoxArr, DistMap; IMPORTANT:
     // refine Geom, BoxArr and DistMap to match desired resolution
+
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
 {
     // TODO: q_max = floor(beta * Nb * nb / consumption_rate(state)), asserted >= 1
-    int interval = 1;
-    AMREX_ALWAYS_ASSERT(interval >= 1);
-    return interval;
+    AMREX_ALWAYS_ASSERT(regrid_int >= 1);
+    return regrid_int;
 }
 
 void DomainManager::tagSupportRegion(const FlowField& state, const MultiFab& divU_fine) 
 {
     // computes vorticity and divergence of lamb vector tags accordingly and
     // stores in supp_tag_arr
+    // IMPORTANT: ensure that the function always fills the tag_arr based on 
+    // the MultiFab on which the source field is computed. Ideally it should
+    // be Dxsoln (all MultiFabs in the domain need to adhere to this)
 
     // TEMP checker for upd4-3-1: divU_fine included
     const int num_local_boxes = divU_fine.local_size();

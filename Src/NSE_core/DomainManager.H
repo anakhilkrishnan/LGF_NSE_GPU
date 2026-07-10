@@ -26,7 +26,8 @@ class DomainManager
 
         // inputs needed from Solver config
         amrex::Real supp_tag_eps;
-
+        int regrid_int;
+        int n_buffer;
         // scratch type variables
 
         // supporting functions
