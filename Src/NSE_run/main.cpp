@@ -39,7 +39,7 @@ void extendedMain()
     DomainManager dmgr(sol_cfg);
     
     // extract correct region and update geom, boxarr and distmap
-    dmgr.initializeSnugDomain();
+    dmgr.initializeSnugDomain(sol_cfg);
 
     // create flow field object
     FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
@@ -64,9 +64,6 @@ void extendedMain()
 
     // fill ghost cells and apply physical BCs
     state_n.setBoundary();
-
-    // TEMP: compute and set tagarr atleast once
-    dmgr.tagSupportRegion(state_n, workspace.divU);
 
     time = sol_cfg.t_start;
     step = 0;

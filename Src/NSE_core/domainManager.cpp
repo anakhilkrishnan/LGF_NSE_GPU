@@ -21,21 +21,21 @@ DomainManager::DomainManager(const SolverConfig& config)
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 
-    // create FlowField data using search params
-    FlowField search_state(geom, ba, dm, config);
-
     // initializing domain handling parameters
     supp_tag_eps = config.supp_tag_eps;
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
     n_buffer = config.n_buffer;
 }
 
-void DomainManager::initializeSnugDomain()
+void DomainManager::initializeSnugDomain(const SolverConfig& config)
 {
     BL_PROFILE("<Compute>initializeSnugDomain()")
     // create coarse multifab to store velocity and vorticity pass them for
     // tagging use tag information to update Geom, BoxArr, DistMap; IMPORTANT:
     // refine Geom, BoxArr and DistMap to match desired resolution
+
+    // create FlowField data using search params
+    FlowField search_state(geom, ba, dm, config);
 
     // initializing coarse search domain with velocity
     initializeVelField(search_state);
@@ -111,7 +111,7 @@ void DomainManager::tagSupportRegion(const FlowField& state)
     amrex::ParallelFor(divN, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
     {
         if (d_flags_ptr[box_no] != 0) return;   // early-out, now indexed by box_no
-        if (amrex::Max(amrex::Math::abs(vort_arrs[box_no](i,j,k)), amrex::Math::abs(divN_arrs[box_no](i,j,k))) > tag_thresh)
+        if (amrex::max(amrex::Math::abs(vort_arrs[box_no](i,j,k)), amrex::Math::abs(divN_arrs[box_no](i,j,k))) > tag_thresh)
         {
             amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
         }

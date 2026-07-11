@@ -66,7 +66,9 @@ amrex::Real discreteCurlF2E(int i, int j, int k, amrex::GpuArray<amrex::Real, AM
     // extract components from vec
     auto const& u = vec[0];
     auto const& v = vec[1];
-
+#if AMREX_SPACEDIM == 3
+    auto const& w = vec[2];
+#endif
 
     // return component-wise
     if constexpr (dim == 2)
@@ -75,7 +77,6 @@ amrex::Real discreteCurlF2E(int i, int j, int k, amrex::GpuArray<amrex::Real, AM
     }
 
 #if AMREX_SPACEDIM == 3
-    auto const& w = vec[2];
     else if constexpr (dim == 1)
     {
         return (((u(i,j,k) - u(i,j,k-1)) * invdx[2]) - ((w(i,j,k) - w(i-1,j,k)) * invdx[0]));

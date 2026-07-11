@@ -113,7 +113,7 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
     using ReduceTuple = typename decltype(reduce_data)::Type;
 
     // grid spacing for the stencil
-    const auto dxinv = input_state.getGeom().InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
+    const auto invdx = input_state.getGeom().InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
 
     // You reduce over CELL-centered boxes (divergence is cell-centered),
     // so iterate something cell-centered — e.g. the pressure MultiFab —

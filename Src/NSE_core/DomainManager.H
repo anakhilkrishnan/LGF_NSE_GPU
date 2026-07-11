@@ -17,6 +17,14 @@
 // free function: this must be defined in NSE_run
 void initializeVelField(FlowField& init_state);
 
+// free functions for convenience/plotting
+amrex::MultiFab computePlotVorticity(const FlowField& state);
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
+amrex::MultiFab computePlotDivU(const FlowField& state);
+
+
+
 // IMPORTANT: At present, domainManager is wired up for 2D, see vorticity
 // management (in both tagging and vort2vel)
 class DomainManager
@@ -33,7 +41,9 @@ class DomainManager
         amrex::Real supp_tag_eps;
         int regrid_int;
         int n_buffer;
+
         // scratch type variables
+
 
         // supporting functions
         
@@ -50,7 +60,7 @@ class DomainManager
         // primary functionality
         DomainManager(const SolverConfig& config);
         void tagSupportRegion(const FlowField& state);
-        void initializeSnugDomain();
+        void initializeSnugDomain(const SolverConfig& config);
         int computeRegridInterval(const FlowField& state) const ;
         void updateSnugDomain(const FlowField& state);
 };
