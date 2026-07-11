@@ -3,6 +3,7 @@
 
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_MultiFabUtil.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
@@ -42,14 +43,14 @@ class DomainManager
         int regrid_int;
         int n_buffer;
 
-        // scratch type variables
-
-
         // supporting functions
         
 
     public:
-        // information about regridding that is open to the solver
+        // scratch type variables
+        amrex::MultiFab vort;
+        amrex::MultiFab divN;
+        amrex::MultiFab DSupp;
 
         // getter functions
         amrex::BoxArray getBoxArr() const { return ba; }

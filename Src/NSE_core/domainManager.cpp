@@ -25,6 +25,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     supp_tag_eps = config.supp_tag_eps;
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
     n_buffer = config.n_buffer;
+
 }
 
 void DomainManager::initializeSnugDomain(const SolverConfig& config)
@@ -68,8 +69,10 @@ void DomainManager::tagSupportRegion(const FlowField& state)
     // the MultiFab on which the source field is computed. Ideally it should
     // be Dxsoln (all MultiFabs in the domain need to adhere to this)
 
-    amrex::MultiFab vort = computePlotVorticity(state);
-    amrex::MultiFab divN = computeDivNonLinearTerm(state);
+    // this call is feasible because we ensure that at any given time, vort, divN and state.getPres()
+    // all live on the same ba and dm
+    vort = computePlotVorticity(state);
+    divN = computeDivNonLinearTerm(state);
 
     // normalize vorticity by its global max (DECIDE: 3D magnitude, not comp 0)
     amrex::Real vort_max_norm = vort.norm0(0, 0, false);
@@ -124,4 +127,159 @@ void DomainManager::updateSnugDomain(const FlowField& state)
     // reads current flowfield state, grows boxarr outward a bit more to create
     // new search space; tags on updated search space; uses tag informatino to
     // update Geom, BoxArr, DistMap; 
+}
+
+// Computes cell-centered vorticity for plotting, via the staggered discrete
+// curl (discreteCurlF2E) followed by native averaging to cell centers.
+// The edge/node intermediate is the SAME vorticity vort2vel consumes.
+amrex::MultiFab computePlotVorticity(const FlowField& state)
+{
+    BL_PROFILE("computePlotVorticity()");
+
+    const amrex::Geometry& geom = state.getGeom();
+    const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+
+    const amrex::BoxArray& ba = state.getPres().boxArray();
+    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
+
+    const int ncomp = (AMREX_SPACEDIM == 2) ? 1 : 3;
+    amrex::MultiFab vort_cc(ba, dm, ncomp, 0);
+
+    // package velocity Array4s once (per-box handles fetched inside MFIter)
+    // ---- build the staggered curl, then average to cell centers ----
+
+#if AMREX_SPACEDIM == 2
+    // 2D: omega_z lives at NODES. One nodal MultiFab.
+    amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
+    amrex::MultiFab vort_nd(ba_nd, dm, 1, 0);
+
+    for (amrex::MFIter mfi(vort_nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& out = vort_nd.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
+            state.getVel(0).const_array(mfi),
+            state.getVel(1).const_array(mfi)
+        };
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
+        });
+    }
+    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, ncomp, 0);
+
+#elif AMREX_SPACEDIM == 3
+    // 3D: each omega component lives on a DIFFERENT edge type.
+    // omega_x on x-edges (nodal in y,z), omega_y on y-edges, omega_z on z-edges.
+    amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vort_edge;
+    for (int n = 0; n < AMREX_SPACEDIM; ++n)
+    {
+        // edge type for component n: nodal in the two directions != n
+        amrex::IntVect etype = amrex::IntVect::TheNodeVector();
+        etype[n] = 0;  // cell-centered along axis n -> that axis's edge
+        amrex::BoxArray ba_e = amrex::convert(ba, etype);
+        vort_edge[n].define(ba_e, dm, 1, 0);
+    }
+
+    for (amrex::MFIter mfi(vort_cc, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
+            state.getVel(0).const_array(mfi),
+            state.getVel(1).const_array(mfi),
+            state.getVel(2).const_array(mfi)
+        };
+        auto const& ox = vort_edge[0].array(mfi);
+        auto const& oy = vort_edge[1].array(mfi);
+        auto const& oz = vort_edge[2].array(mfi);
+
+        // each component on its own edge box
+        const amrex::Box bx0 = mfi.tilebox(vort_edge[0].ixType().toIntVect());
+        const amrex::Box bx1 = mfi.tilebox(vort_edge[1].ixType().toIntVect());
+        const amrex::Box bx2 = mfi.tilebox(vort_edge[2].ixType().toIntVect());
+
+        amrex::ParallelFor(bx0, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            ox(i,j,k) = discreteCurlF2E<0>(i,j,k,invdx,vel);
+        });
+        amrex::ParallelFor(bx1, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            oy(i,j,k) = discreteCurlF2E<1>(i,j,k,invdx,vel);
+        });
+        amrex::ParallelFor(bx2, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            oz(i,j,k) = discreteCurlF2E<2>(i,j,k,invdx,vel);
+        });
+    }
+
+    amrex::average_edge_to_cellcenter(
+        vort_cc, 0,
+        amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{
+            &vort_edge[0], &vort_edge[1], &vort_edge[2]}, 0);
+#endif
+
+    return vort_cc;
+}
+
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
+{
+    BL_PROFILE("computeDivNonLinearTerm()");
+
+    const amrex::Geometry& geom = state.getGeom();
+    const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+
+    const amrex::BoxArray& ba = state.getPres().boxArray();
+    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
+
+    // create base multifab to work on
+
+    amrex::MultiFab divN(ba, dm, state.getPres().nComp(), 0);
+
+    for (amrex::MFIter mfi(divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& divN_arr = divN.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{AMREX_D_DECL(state.getVel(0).const_array(mfi), state.getVel(1).const_array(mfi), state.getVel(2).const_array(mfi))};
+        
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            divN_arr(i,j,k) = divMorinishiConvective(i,j,k, invdx, vel);
+        });
+    }
+    
+    return divN;
+}
+
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
+{
+    BL_PROFILE("<Compute> computeDivU()");
+
+    // set divU to 0.0 and store fresh data
+    output_divU.setVal(0.0);
+    
+    // extracting physical dx for computations
+    const amrex::Geometry& geom = input_state.getGeom();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+
+    // compute divU and store in input_state
+    for(amrex::MFIter mfi(output_divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& divU_arr = output_divU.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+        {
+            vel_arr[d] = input_state.getVel(d).const_array(mfi);
+        }
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            divU_arr(i,j,k) = discreteDivergenceF2C(i, j, k, invdx, vel_arr);
+        });
+    }
+}
+
+// function to compute and RETURN divU for plotting divU_at_end
+amrex::MultiFab computePlotDivU(const FlowField& state)
+{
+    // thin wrapper for plot convenience
+    MultiFab out(state.getPres().boxArray(), state.getPres().DistributionMap(), 1, 0);
+    computeDivU(out, state);
+
+    return out;
 }

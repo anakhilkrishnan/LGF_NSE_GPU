@@ -5,7 +5,7 @@ max_grid_size_search = 16
 
 n_cell = 512
 max_grid_size = 512
-n_ghost = 1
+n_ghost = 2 # must be >= 2
 n_comp = 1
 regrid_int = 5
 n_buffer = 10

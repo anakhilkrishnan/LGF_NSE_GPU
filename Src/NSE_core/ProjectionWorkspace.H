@@ -3,7 +3,6 @@
 
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
-#include <AMReX_MultiFabUtil.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
@@ -63,7 +62,7 @@ class ProjectionWorkspace
         ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config);
 
         // functions for initialization
-        void initializePresField(FlowField& init_state);
+        void initializePresField(FlowField& init_state, const amrex::Gpu::DeviceVector<int>& box_tag_arr_in);
 
         // functions for KE computations
         void computeKECompFluxes(const FlowField& input_state);

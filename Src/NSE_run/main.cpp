@@ -53,7 +53,7 @@ void extendedMain()
     state_n.setBoundary();
 
     // populating pressure based on divergence of Navier-Stokes at initial conditions
-    workspace.initializePresField(state_n);
+    workspace.initializePresField(state_n, dmgr.getSuppTagArr());
 
     // populating KE comp arrays
     workspace.computeKEFromState(state_n);
@@ -72,7 +72,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+        io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
 
     }
 
@@ -120,7 +120,7 @@ void extendedMain()
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile(step, time, state_n, workspace.divU, workspace.tagRegion_fine, dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints

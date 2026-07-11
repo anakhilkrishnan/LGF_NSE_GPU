@@ -366,6 +366,20 @@ amrex::Real morinishiKEConvective(int i, int j, int k, amrex::GpuArray<amrex::Re
     }
 }
 
+// single call function for divergence of morinishiConvective
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+amrex::Real divMorinishiConvective(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr)
+{
+    amrex::Real div = ((morinishiConvective<0>(i+1,j,k, invdx, vel_arr) - morinishiConvective<0>(i,j,k, invdx, vel_arr)) * invdx[0]
+                        + (morinishiConvective<1>(i,j+1,k, invdx, vel_arr) - morinishiConvective<1>(i,j,k, invdx, vel_arr)) * invdx[1]);
+#if AMREX_SPACEDIM == 3
+    div += (morinishiConvective<2>(i,j,k+1, invdx, vel_arr) - morinishiConvective<2>(i,j,k, invdx, vel_arr)) * invdx[2];
+#endif 
+
+    return div;
+}
+
 // single call function for RHS of momentum update in RK-stages
 template <int dim>
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
