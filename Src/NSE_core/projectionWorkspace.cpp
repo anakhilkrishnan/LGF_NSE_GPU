@@ -46,11 +46,6 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     divU.define(ba_in, dm_in, n_comp, n_ghost);
     divU.setVal(0.0);
 
-    // object that stores tagging data
-    // PENDING: to be moved to DomainManager
-    tagRegion_fine.define(ba_in, dm_in, 1, 0);
-    tagRegion_fine.setVal(0.0);
-
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
 
@@ -182,13 +177,6 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
 
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);
-
-    // export tagging data into plotting multifab
-    for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
-    {
-        const amrex::Real v = (lgf_poisson_solver.h_source_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
-        tagRegion_fine[mfi].setVal<RunOn::Device>(v);
-    }
 
     // write out divU_at_end_max_norm
     divU_at_end_max_norm = computeDivUMaxNorm(init_state);
@@ -536,13 +524,6 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         // correct stage using correction from workspace
         correctVelocityandPressure(gamma);
         
-    }
-
-    // export tagged cells at the end of each time step
-    for (MFIter mfi(tagRegion_fine); mfi.isValid(); ++mfi) 
-    {
-        const amrex::Real v = (lgf_poisson_solver.h_source_box_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
-        tagRegion_fine[mfi].setVal<RunOn::Device>(v);
     }
 
     state_n = stage;

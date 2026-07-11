@@ -38,19 +38,22 @@ class DomainManager
         amrex::DistributionMapping dm;
         amrex::Gpu::DeviceVector<int> supp_tag_arr;
 
+        // scratch variables
+        amrex::MultiFab DSupp;
+        amrex::Vector<int>h_tag_arr;
+
         // inputs needed from Solver config
         amrex::Real supp_tag_eps;
         int regrid_int;
         int n_buffer;
 
+
         // supporting functions
-        
 
     public:
         // scratch type variables
         amrex::MultiFab vort;
         amrex::MultiFab divN;
-        amrex::MultiFab DSupp;
 
         // getter functions
         amrex::BoxArray getBoxArr() const { return ba; }
@@ -60,6 +63,7 @@ class DomainManager
 
         // primary functionality
         DomainManager(const SolverConfig& config);
+        const amrex::MultiFab& refreshAndGetDSuppFab();
         void tagSupportRegion(const FlowField& state);
         void initializeSnugDomain(const SolverConfig& config);
         int computeRegridInterval(const FlowField& state) const ;

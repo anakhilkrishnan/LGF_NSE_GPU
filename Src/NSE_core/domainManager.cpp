@@ -21,11 +21,30 @@ DomainManager::DomainManager(const SolverConfig& config)
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 
+    DSupp.define(ba, dm, 1, 0);
+    DSupp.setVal(0.0);
+
     // initializing domain handling parameters
     supp_tag_eps = config.supp_tag_eps;
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
     n_buffer = config.n_buffer;
 
+}
+
+const amrex::MultiFab& DomainManager::refreshAndGetDSuppFab()
+{
+    // update h_tag_arr for the box aggregation and plotting
+    h_tag_arr.resize(supp_tag_arr.size());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
+
+    // export tagging data into plotting multifab
+    for (MFIter mfi(DSupp); mfi.isValid(); ++mfi) 
+    {
+        const amrex::Real v = (h_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
+        DSupp[mfi].setVal<RunOn::Device>(v);
+    }
+
+    return DSupp;   // by REFERENCE
 }
 
 void DomainManager::initializeSnugDomain(const SolverConfig& config)
