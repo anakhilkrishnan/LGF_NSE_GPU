@@ -6,7 +6,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     // initializing required solver parameters
     n_lookup = config.n_lookup;
     rk_order = config.rk_order;
-    Re = config.Re;
+    invRe = config.invRe;
     cfl = config.cfl;
 
     // copying parameters necessary for constructor only
@@ -62,39 +62,40 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
     BL_PROFILE("<Compute> computeDt()");
 
     const amrex::Geometry& geom = state_n.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        invdx2[d] = invdx[d] * invdx[d];
+    }
 
     // cfl constraint: advective limit on dt
     amrex::Real u_max = state_n.getVel(0).norm0(0, 0, false);
-    amrex::Real adv_metric = u_max / dx[0];
+    amrex::Real adv_metric = u_max * invdx[0];
 
-    #if AMREX_SPACEDIM >= 2
-        amrex::Real v_max = state_n.getVel(1).norm0(0, 0, false);
-        adv_metric += v_max / dx[1];
-    #endif
+    amrex::Real v_max = state_n.getVel(1).norm0(0, 0, false);
+    adv_metric += v_max * invdx[1];
 
-    #if AMREX_SPACEDIM == 3
-        amrex::Real w_max = state_n.getVel(2).norm0(0, 0, false);
-        adv_metric += w_max / dx[2];
-    #endif
+#if AMREX_SPACEDIM == 3
+    amrex::Real w_max = state_n.getVel(2).norm0(0, 0, false);
+    adv_metric += w_max * invdx[2];
+#endif
 
     // dt_adv = CFL / ( |u|/dx + |v|/dy + |w|/dz )
     amrex::Real dt_adv = cfl / (adv_metric + 1.0e-12); // epsilon to prevent div-by-zero
 
     // diffusive limit on dt
-    amrex::Real diff_metric = 1.0 / (dx[0] * dx[0]);
+    amrex::Real diff_metric = 1.0 * invdx2[0];
     
-    #if AMREX_SPACEDIM >= 2
-        diff_metric += 1.0 / (dx[1] * dx[1]);
-    #endif
+    diff_metric += 1.0 * invdx2[1];
 
     #if AMREX_SPACEDIM == 3
-        diff_metric += 1.0 / (dx[2] * dx[2]);
+        diff_metric += 1.0 * invdx2[2];
     #endif
 
     // for explicit schemes, Fourier number <= 0.5 dt_diff <= 0.5 * Re / (
     // 1/dx^2 + 1/dy^2 + 1/dz^2 )
-    amrex::Real dt_diff = 0.5 * Re / diff_metric;
+    amrex::Real dt_diff = 0.5 / (invRe * diff_metric);
 
     return amrex::min(dt_adv, dt_diff);
 }
@@ -130,9 +131,9 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
             {
                 // discrete divergence at cell (i,j,k) from surrounding faces
                 amrex::Real div =
-                    AMREX_D_TERM(  (u(i+1,j,k) - u(i,j,k)) * dxinv[0],
-                                + (v(i,j+1,k) - v(i,j,k)) * dxinv[1],
-                                + (w(i,j,k+1) - w(i,j,k)) * dxinv[2] );
+                    AMREX_D_TERM(  (u(i+1,j,k) - u(i,j,k)) * invdx[0],
+                                + (v(i,j+1,k) - v(i,j,k)) * invdx[1],
+                                + (w(i,j,k+1) - w(i,j,k)) * invdx[2] );
                 return { amrex::Math::abs(div) };
             });
     }
@@ -155,7 +156,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
 
     // compute divergence of rhs_vel and store in divU
     const amrex::Geometry& geom = init_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
     for(amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
@@ -171,7 +172,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state)
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) 
         {
             // discreteDivergence works here because rhs_vel is face-centered
-            div_arr(i,j,k) = discreteDivergence(i, j, k, dx, rhs_arr);
+            div_arr(i,j,k) = discreteDivergenceF2C(i, j, k, invdx, rhs_arr);
         });
     }
 
@@ -199,11 +200,16 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
     // KEP scheme as outlined in Morinish et. al.
 
     // function's copy of Re to be passed to GPU lambdas
-    amrex::Real Re_temp = Re;
+    amrex::Real invRe_temp = invRe;
     
     // extracting physical dx for computations
     const amrex::Geometry& geom = input_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        invdx2[d] = invdx[d] * invdx[d];
+    }
 
     // for each velocity direction, rhs is computed accordingly
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -240,18 +246,18 @@ void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<0>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
+                    rhs_ke_arr(i,j,k) = morinishiKEFlux<0>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
                 }
             #if AMREX_SPACEDIM >= 2
                 else if (idim == 1) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<1>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
+                    rhs_ke_arr(i,j,k) = morinishiKEFlux<1>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
                 }
             #endif
             #if AMREX_SPACEDIM == 3
                 else if (idim == 2) 
                 {
-                    rhs_ke_arr(i,j,k) = morinishiKECompFlux<2>(i, j, k, vel_arr, pres_arr, kecomp_arr, dx, Re_temp);
+                    rhs_ke_arr(i,j,k) = morinishiKEFlux<2>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
                 }
             #endif
             });
@@ -333,10 +339,15 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& input_state)
 
     // extracting physical dx for computations
     const amrex::Geometry& geom = input_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        invdx2[d] = invdx[d] * invdx[d];
+    }
 
     // local copy of Re for passing to GPU lambdas
-    amrex::Real Re_temp = Re;
+    amrex::Real invRe_temp = invRe;
 
     // for each velocity direction, rhs is computed accordingly
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -358,18 +369,18 @@ void ProjectionWorkspace::computeMomentumFluxes(const FlowField& input_state)
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs(i,j,k) = morinishiFlux<0>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
+                    rhs(i,j,k) = morinishiFlux<0>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, pres_arr);
                 }
             #if AMREX_SPACEDIM >= 2
                 else if (idim == 1) 
                 {
-                    rhs(i,j,k) = morinishiFlux<1>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
+                    rhs(i,j,k) = morinishiFlux<1>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, pres_arr);
                 }
             #endif
             #if AMREX_SPACEDIM == 3
                 else if (idim == 2) 
                 {
-                    rhs(i,j,k) = morinishiFlux<2>(i, j, k, vel_arr, pres_arr, dx, Re_temp);
+                    rhs(i,j,k) = morinishiFlux<2>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, pres_arr);
                 }
             #endif
             });
@@ -417,7 +428,7 @@ void ProjectionWorkspace::computeVelocityCorrection()
     BL_PROFILE("<Compute> advanceTimeStep(): computeVelocityCorrection");
 
     const amrex::Geometry& geom = stage.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
     // for each velocity direction, vel_corr is computed accordingly
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -435,18 +446,16 @@ void ProjectionWorkspace::computeVelocityCorrection()
                 // these happen at compile time
                 if (idim == 0) 
                 {
-                    rhs_corr(i,j,k) = discreteGradient<0>(i, j, k, pres_corr_arr, dx);
+                    rhs_corr(i,j,k) = discreteGradientC2F<0>(i, j, k, invdx, pres_corr_arr);
                 }
-                #if AMREX_SPACEDIM >= 2
-                    else if (idim == 1) 
-                    {
-                        rhs_corr(i,j,k) = discreteGradient<1>(i, j, k, pres_corr_arr, dx);
-                    }
-                #endif
+                else if (idim == 1) 
+                {
+                    rhs_corr(i,j,k) = discreteGradientC2F<1>(i, j, k, invdx, pres_corr_arr);
+                }
                 #if AMREX_SPACEDIM == 3
                     else if (idim == 2) 
                     {
-                        rhs_corr(i,j,k) = discreteGradient<2>(i, j, k, pres_corr_arr, dx);
+                        rhs_corr(i,j,k) = discreteGradientC2F<2>(i, j, k, invdx, pres_corr_arr);
                     }
                 #endif
             });
@@ -471,11 +480,6 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
 
     // fill ghost cells and physical BCs
     stage.setBoundary();
-
-    // additional checker for divergence at end of step extracting physical dx
-    // for computations
-    const amrex::Geometry& geom = stage.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
 
     // write out divU_at_end_max_norm
     divU_at_end_max_norm = computeDivUMaxNorm(stage);
@@ -546,71 +550,93 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
 {
 
 }
-// function to compute cell-centered vorticity from staggered flowfield for
-// plotting
+
+// Computes cell-centered vorticity for plotting, via the staggered discrete
+// curl (discreteCurlF2E) followed by native averaging to cell centers.
+// The edge/node intermediate is the SAME vorticity vort2vel consumes.
 amrex::MultiFab computePlotVorticity(const FlowField& state)
 {
     BL_PROFILE("computePlotVorticity()");
 
-    // get geometry and grid info using your safely encapsulated getter
     const amrex::Geometry& geom = state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
-    amrex::BoxArray ba = state.getPres().boxArray();
-    amrex::DistributionMapping dm = state.getPres().DistributionMap();
+    const amrex::BoxArray& ba = state.getPres().boxArray();
+    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
 
-    // allocate the cell-centered vorticity MultiFab In 2D: 1 component
-    // (omega_z). In 3D: 3 components (omega_x, omega_y, omega_z)
-    int ncomp = (AMREX_SPACEDIM == 2) ? 1 : 3;
-    amrex::MultiFab vort(ba, dm, ncomp, 0);
+    const int ncomp = (AMREX_SPACEDIM == 2) ? 1 : 3;
+    amrex::MultiFab vort_cc(ba, dm, ncomp, 0);
 
-    // compute the averaged gradients on the GPU
-    for (amrex::MFIter mfi(vort, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    // package velocity Array4s once (per-box handles fetched inside MFIter)
+    // ---- build the staggered curl, then average to cell centers ----
+
+#if AMREX_SPACEDIM == 2
+    // 2D: omega_z lives at NODES. One nodal MultiFab.
+    amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
+    amrex::MultiFab vort_nd(ba_nd, dm, 1, 0);
+
+    for (amrex::MFIter mfi(vort_nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
-
-        auto const& vort_arr = vort.array(mfi);
-        auto const& u_arr    = state.getVel(0).const_array(mfi);
-        auto const& v_arr    = state.getVel(1).const_array(mfi);
-        
-        #if AMREX_SPACEDIM == 3
-        auto const& w_arr    = state.getVel(2).const_array(mfi);
-        #endif
-
+        auto const& out = vort_nd.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
+            state.getVel(0).const_array(mfi),
+            state.getVel(1).const_array(mfi)
+        };
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            // Note: A face-centered array at index (i,j,k) represents the
-            // 'left' or 'bottom' face. (i+1,j,k) represents the 'right' face,
-            // etc.
-            
-            #if AMREX_SPACEDIM == 2
-                // dv/dx averaged from top and bottom y-faces
-                amrex::Real dvdx = (v_arr(i+1,j,k) + v_arr(i+1,j+1,k) - v_arr(i-1,j,k) - v_arr(i-1,j+1,k)) / (4.0 * dx[0]);
-                // du/dy averaged from left and right x-faces
-                amrex::Real dudy = (u_arr(i,j+1,k) + u_arr(i+1,j+1,k) - u_arr(i,j-1,k) - u_arr(i+1,j-1,k)) / (4.0 * dx[1]);
-                
-                vort_arr(i,j,k) = dvdx - dudy;
+            out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
+        });
+    }
+    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, ncomp, 0);
 
-            #elif AMREX_SPACEDIM == 3
-                // omega_x = dw/dy - dv/dz
-                amrex::Real dwdy = (w_arr(i,j+1,k) + w_arr(i,j+1,k+1) - w_arr(i,j-1,k) - w_arr(i,j-1,k+1)) / (4.0 * dx[1]);
-                amrex::Real dvdz = (v_arr(i,j,k+1) + v_arr(i,j+1,k+1) - v_arr(i,j,k-1) - v_arr(i,j+1,k-1)) / (4.0 * dx[2]);
-                vort_arr(i,j,k,0) = dwdy - dvdz;
+#elif AMREX_SPACEDIM == 3
+    // 3D: each omega component lives on a DIFFERENT edge type.
+    // omega_x on x-edges (nodal in y,z), omega_y on y-edges, omega_z on z-edges.
+    amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vort_edge;
+    for (int n = 0; n < AMREX_SPACEDIM; ++n)
+    {
+        // edge type for component n: nodal in the two directions != n
+        amrex::IntVect etype = amrex::IntVect::TheNodeVector();
+        etype[n] = 0;  // cell-centered along axis n -> that axis's edge
+        amrex::BoxArray ba_e = amrex::convert(ba, etype);
+        vort_edge[n].define(ba_e, dm, 1, 0);
+    }
 
-                // omega_y = du/dz - dw/dx
-                amrex::Real dudz = (u_arr(i,j,k+1) + u_arr(i+1,j,k+1) - u_arr(i,j,k-1) - u_arr(i+1,j,k-1)) / (4.0 * dx[2]);
-                amrex::Real dwdx = (w_arr(i+1,j,k) + w_arr(i+1,j,k+1) - w_arr(i-1,j,k) - w_arr(i-1,j,k+1)) / (4.0 * dx[0]);
-                vort_arr(i,j,k,1) = dudz - dwdx;
+    for (amrex::MFIter mfi(vort_cc, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
+            state.getVel(0).const_array(mfi),
+            state.getVel(1).const_array(mfi),
+            state.getVel(2).const_array(mfi)
+        };
+        auto const& ox = vort_edge[0].array(mfi);
+        auto const& oy = vort_edge[1].array(mfi);
+        auto const& oz = vort_edge[2].array(mfi);
 
-                // omega_z = dv/dx - du/dy
-                amrex::Real dvdx = (v_arr(i+1,j,k) + v_arr(i+1,j+1,k) - v_arr(i-1,j,k) - v_arr(i-1,j+1,k)) / (4.0 * dx[0]);
-                amrex::Real dudy = (u_arr(i,j+1,k) + u_arr(i+1,j+1,k) - u_arr(i,j-1,k) - u_arr(i+1,j-1,k)) / (4.0 * dx[1]);
-                vort_arr(i,j,k,2) = dvdx - dudy;
-            #endif
+        // each component on its own edge box
+        const amrex::Box bx0 = mfi.tilebox(vort_edge[0].ixType().toIntVect());
+        const amrex::Box bx1 = mfi.tilebox(vort_edge[1].ixType().toIntVect());
+        const amrex::Box bx2 = mfi.tilebox(vort_edge[2].ixType().toIntVect());
+
+        amrex::ParallelFor(bx0, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            ox(i,j,k) = discreteCurlF2E<0>(i,j,k,invdx,vel);
+        });
+        amrex::ParallelFor(bx1, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            oy(i,j,k) = discreteCurlF2E<1>(i,j,k,invdx,vel);
+        });
+        amrex::ParallelFor(bx2, [=] AMREX_GPU_DEVICE (int i,int j,int k){
+            oz(i,j,k) = discreteCurlF2E<2>(i,j,k,invdx,vel);
         });
     }
 
-    return vort;
+    amrex::average_edge_to_cellcenter(
+        vort_cc, 0,
+        amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{
+            &vort_edge[0], &vort_edge[1], &vort_edge[2]}, 0);
+#endif
+
+    return vort_cc;
 }
 
 amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
@@ -629,7 +655,7 @@ void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
     
     // extracting physical dx for computations
     const amrex::Geometry& geom = input_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
     // compute divU and store in input_state
     for(amrex::MFIter mfi(output_divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
@@ -643,7 +669,7 @@ void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
         }
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            divU_arr(i,j,k) = discreteDivergence(i, j, k, dx, vel_arr);
+            divU_arr(i,j,k) = discreteDivergenceF2C(i, j, k, invdx, vel_arr);
         });
     }
 }

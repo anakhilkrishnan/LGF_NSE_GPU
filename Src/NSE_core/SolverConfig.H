@@ -28,7 +28,7 @@ struct SolverConfig
     amrex::Real cfl;
 
     // physical parameters
-    amrex::Real Re;
+    amrex::Real invRe;
     amrex::Real supp_tag_eps;
 
     // LGF kernel parameters
@@ -56,7 +56,7 @@ struct SolverConfig
         pp.get("t_stop", t_stop);
         pp.get("cfl", cfl);  
 
-        pp.get("Re", Re);
+        pp.get("invRe", invRe);
         pp.get("support_threshold", supp_tag_eps);
 
         pp.get("n_lookup", n_lookup);

@@ -3,6 +3,7 @@
 
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_MultiFabUtil.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
@@ -31,9 +32,9 @@ class ProjectionWorkspace
         int n_lookup;
         int rk_order;
         amrex::Real cfl;
-        amrex::Real Re;
 
         amrex::Real dt;
+        amrex::Real invRe;
 
         directSumLGF lgf_poisson_solver;
 

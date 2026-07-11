@@ -18,7 +18,7 @@ t_start = 0.0
 t_stop = 10.0
 cfl = 0.5
 
-Re = 30000
+invRe = 0.00003
 support_threshold = 1e-10
 
 n_lookup = 32
