@@ -1,10 +1,9 @@
 amrex.max_gpu_streams = 4
 
-n_cell_search = 512
-max_grid_size_search = 16
-
-search_to_fine_ref_ratio = 2
+n_cell = 1024
 max_grid_size = 64
+
+search_to_fine_ref_ratio = 4
 max_grid_size_tagging = 32
 n_ghost = 2 # must be >= 2
 n_comp = 1

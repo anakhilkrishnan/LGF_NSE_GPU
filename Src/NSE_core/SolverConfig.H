@@ -9,13 +9,13 @@ struct SolverConfig
 {
     // grid parameters
     // initial coarse search grid parameters
-    int n_cell_search;
-    int max_grid_size_search;
+    int n_cell;
+    int max_grid_size;
 
     // fine grid parameters
     int search_to_fine_ref_ratio;
-    int n_cell;
-    int max_grid_size;
+    int n_cell_search;
+    int max_grid_size_search;
     int max_grid_size_tagging;
     int n_ghost;
     int n_comp = 1;
@@ -40,11 +40,10 @@ struct SolverConfig
     {
         amrex::ParmParse pp;
 
-        pp.get("n_cell_search", n_cell_search);
-        pp.get("max_grid_size_search", max_grid_size_search);
+        pp.get("n_cell", n_cell);
+        pp.get("max_grid_size", max_grid_size);
 
         pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
-        pp.get("max_grid_size", max_grid_size);
         pp.get("max_grid_size_tagging", max_grid_size_tagging);
         pp.get("n_ghost", n_ghost);
         pp.query("n_comp", n_comp);
@@ -64,8 +63,8 @@ struct SolverConfig
 
         pp.get("n_lookup", n_lookup);
 
-        // update n_cell
-        n_cell = n_cell_search * search_to_fine_ref_ratio;
+        n_cell_search = n_cell / search_to_fine_ref_ratio;
+        max_grid_size_search = max_grid_size / search_to_fine_ref_ratio;
     }
 };
 
