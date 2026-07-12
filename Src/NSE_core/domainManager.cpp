@@ -27,15 +27,59 @@ DomainManager::DomainManager(const SolverConfig& config)
     // initializing domain handling parameters
     supp_tag_eps = config.supp_tag_eps;
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
-    n_buffer = config.n_buffer;
 
+}
+
+amrex::BoxArray DomainManager::gatherBoxArr(const FlowField& state)
+{
+    // ensuring the h_tag_arr is updated with respect to state
+    AMREX_ALWAYS_ASSERT(h_tag_arr.size() == state.getPres().local_size());
+
+    // create a box vector containing only the tagged boxes
+    amrex::Vector<amrex::Box> local_tagged_boxes;
+    {
+        int local_i = 0;
+        for (amrex::MFIter mfi(state.getPres()); mfi.isValid(); ++mfi, ++local_i)
+        {
+            if (h_tag_arr[local_i] != 0) {
+                local_tagged_boxes.push_back(mfi.validbox());   // the coarse Box for this tagged cell-region
+            }
+        }
+    }
+
+    // gather across all ranks for boxes, updates in place and create box list
+    amrex::AllGatherBoxes(local_tagged_boxes);
+    amrex::BoxList bl(std::move(local_tagged_boxes));
+    amrex::BoxArray tag_ba(std::move(bl));
+
+    return tag_ba;
+}
+
+void DomainManager::growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size)
+{
+    tag_ba.grow(nBuff);          // grow each box (now overlapping)
+    tag_ba.removeOverlap(true);     // BoxArray method: removes overlap AND simplifies
+    tag_ba.maxSize(max_grid_size);  // re-chunk to compute box size
+}
+
+void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba, const SolverConfig& config)
+{    
+    // update members
+    ba = tag_ba;
+    dm.define(ba);
+
+    // geom: same physical RealBox, but FINE resolution domain box
+    amrex::Box fine_domain(amrex::IntVect(0), amrex::IntVect(AMREX_D_DECL(config.n_cell-1, config.n_cell-1, config.n_cell-1)));
+    amrex::RealBox real_box({AMREX_D_DECL(config.dom_lo[0], config.dom_lo[1], config.dom_lo[2])}, {AMREX_D_DECL(config.dom_hi[0], config.dom_hi[1], config.dom_hi[2])});
+
+    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0);
+    geom.define(fine_domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 }
 
 const amrex::MultiFab& DomainManager::refreshAndGetDSuppFab()
 {
-    // update h_tag_arr for the box aggregation and plotting
-    h_tag_arr.resize(supp_tag_arr.size());
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
+    // redefine DSupp to match current grid
+    DSupp.define(ba, dm, 1, 0);
 
     // export tagging data into plotting multifab
     for (MFIter mfi(DSupp); mfi.isValid(); ++mfi) 
@@ -63,13 +107,12 @@ void DomainManager::initializeSnugDomain(const SolverConfig& config)
 
     tagSupportRegion(search_state);
 
-    // loop that extracts only boxes that are tagged, rolls them into single
-    // new box array and refines them fully
-
-
-
+    amrex::BoxArray tag_ba = gatherBoxArr(search_state);
     
+    tag_ba.refine(config.search_to_fine_ref_ratio);   // now at fine resolution
 
+    growBoxArr(tag_ba, config.n_buffer_box * config.max_grid_size, config.max_grid_size);
+    updateGeomBaDm(tag_ba, config);
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
@@ -138,6 +181,10 @@ void DomainManager::tagSupportRegion(const FlowField& state)
             amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
         }
     });
+    
+    // update h_tag_arr for the box aggregation and plotting
+    h_tag_arr.resize(supp_tag_arr.size());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
 }
 
 void DomainManager::updateSnugDomain(const FlowField& state)

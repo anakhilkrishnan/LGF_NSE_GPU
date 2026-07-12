@@ -52,6 +52,9 @@ void extendedMain()
     // fill ghost cells and apply physical BCs
     state_n.setBoundary();
 
+    // tag again on the fine grid to prep for the solver
+    dmgr.tagSupportRegion(state_n);
+    
     // populating pressure based on divergence of Navier-Stokes at initial conditions
     workspace.initializePresField(state_n, dmgr.getSuppTagArr());
 

@@ -11,14 +11,16 @@ struct SolverConfig
     // initial coarse search grid parameters
     int n_cell_search;
     int max_grid_size_search;
-    
+
     // fine grid parameters
+    int search_to_fine_ref_ratio;
     int n_cell;
     int max_grid_size;
+    int max_grid_size_tagging;
     int n_ghost;
     int n_comp = 1;
     int regrid_int = 5;
-    int n_buffer = 10;
+    int n_buffer_box = 1;
     amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
 
     // time stepping parameters
@@ -41,12 +43,13 @@ struct SolverConfig
         pp.get("n_cell_search", n_cell_search);
         pp.get("max_grid_size_search", max_grid_size_search);
 
-        pp.get("n_cell", n_cell);
+        pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
         pp.get("max_grid_size", max_grid_size);
+        pp.get("max_grid_size_tagging", max_grid_size_tagging);
         pp.get("n_ghost", n_ghost);
         pp.query("n_comp", n_comp);
         pp.query("regrid_int", regrid_int);
-        pp.query("n_buffer", n_buffer);
+        pp.query("n_buffer_box", n_buffer_box);
         pp.get("domain_lo", dom_lo);
         pp.get("domain_hi", dom_hi);
 
@@ -60,6 +63,9 @@ struct SolverConfig
         pp.get("support_threshold", supp_tag_eps);
 
         pp.get("n_lookup", n_lookup);
+
+        // update n_cell
+        n_cell = n_cell_search * search_to_fine_ref_ratio;
     }
 };
 

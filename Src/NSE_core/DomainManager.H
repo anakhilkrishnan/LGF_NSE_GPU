@@ -4,6 +4,7 @@
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H>
+#include <AMReX_BoxList.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
@@ -49,6 +50,9 @@ class DomainManager
 
 
         // supporting functions
+        amrex::BoxArray gatherBoxArr(const FlowField& state);
+        void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
+        void updateGeomBaDm(amrex::BoxArray& tag_ba, const SolverConfig& config);
 
     public:
         // scratch type variables
@@ -68,6 +72,8 @@ class DomainManager
         void initializeSnugDomain(const SolverConfig& config);
         int computeRegridInterval(const FlowField& state) const ;
         void updateSnugDomain(const FlowField& state);
+
+        // supporting functions
 };
 
 #endif

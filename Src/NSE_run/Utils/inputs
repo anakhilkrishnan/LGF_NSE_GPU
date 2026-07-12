@@ -3,17 +3,18 @@ amrex.max_gpu_streams = 4
 n_cell_search = 512
 max_grid_size_search = 16
 
-n_cell = 512
-max_grid_size = 512
+search_to_fine_ref_ratio = 2
+max_grid_size = 64
+max_grid_size_tagging = 32
 n_ghost = 2 # must be >= 2
 n_comp = 1
 regrid_int = 5
-n_buffer = 10
+n_buffer_box = 2
 domain_lo = -1.0 -1.0 -1.0
 domain_hi = 1.0 1.0 1.0
 
 rk_order = 2
-max_steps = 10
+max_steps = 4
 t_start = 0.0
 t_stop = 10.0
 cfl = 0.5
@@ -24,7 +25,7 @@ support_threshold = 1e-10
 n_lookup = 32
 
 write_plot = true
-plot_int = 5
+plot_int = 2
 plot_dir = "./Results"
 plot_prefix = "/plt"
 
