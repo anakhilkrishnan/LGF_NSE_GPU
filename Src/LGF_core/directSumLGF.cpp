@@ -200,6 +200,11 @@ void directSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
     }
 }
 
+void directSumLGF::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
+{
+    geom = new_geom;
+}
+
 void directSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     // adding profiling blocks for Tiny/Base profilers

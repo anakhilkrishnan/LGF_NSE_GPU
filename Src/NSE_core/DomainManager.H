@@ -44,15 +44,16 @@ class DomainManager
         amrex::Vector<int>h_tag_arr;
 
         // inputs needed from Solver config
-        amrex::Real supp_tag_eps;
         int regrid_int;
-        int n_buffer;
 
+        int n_cell, max_grid_size, n_buffer_box, search_to_fine_ref_ratio;
+        amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
+        amrex::Real supp_tag_eps;
 
         // supporting functions
         amrex::BoxArray gatherBoxArr(const FlowField& state);
         void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
-        void updateGeomBaDm(amrex::BoxArray& tag_ba, const SolverConfig& config);
+        void updateGeomBaDm(amrex::BoxArray& tag_ba);
 
     public:
         // scratch type variables

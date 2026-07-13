@@ -142,6 +142,7 @@ void extendedMain()
             dmgr.updateSnugDomain(state_n);
             state_n.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            dmgr.tagSupportRegion(state_n);
         }
 
         // track duration of timestep

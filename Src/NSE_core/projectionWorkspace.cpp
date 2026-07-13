@@ -531,5 +531,24 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
 
 void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
 {
+    // update the Poisson solver
+    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);
 
+    // update stage without worrying about data and so on
+    stage.redefine(new_geom, new_ba, new_dm);
+
+    // update all scratch MultiFabs
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
+        
+        rhs_vel[idim].define(new_ba_face, new_dm, rhs_vel[idim].nComp(), rhs_vel[idim].nGrow());
+        rhs_vel_corr[idim].define(new_ba_face, new_dm, rhs_vel_corr[idim].nComp(), rhs_vel_corr[idim].nGrow());
+        rhs_kecomp[idim].define(new_ba_face, new_dm, rhs_kecomp[idim].nComp(), rhs_kecomp[idim].nGrow());
+        kecomp_dir[idim].define(new_ba_face, new_dm, kecomp_dir[idim].nComp(), kecomp_dir[idim].nGrow());
+    }
+
+    // reallocate cell-centered arrays
+    pres_corr.define(new_ba, new_dm, pres_corr.nComp(), pres_corr.nGrow());
+    divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
 }

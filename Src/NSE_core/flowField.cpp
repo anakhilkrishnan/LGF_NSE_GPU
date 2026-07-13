@@ -105,9 +105,23 @@ void FlowField::setBoundary()
     pres.FillBoundary(globalgeom.periodicity());
 }
 
+void FlowField::redefine(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
+{
+    BL_PROFILE("<MemMgmt> FlowField::redefine()");
+    globalgeom = new_geom;
+
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
+        vel[idim].define(new_ba_face, new_dm, vel[idim].nComp(), vel[idim].nGrow());
+        kecomp[idim].define(new_ba_face, new_dm, kecomp[idim].nComp(), kecomp[idim].nGrow());
+    }
+    pres.define(new_ba, new_dm, pres.nComp(), pres.nGrow());
+}
+
 void FlowField::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
 {
-
+    
 }
 
     

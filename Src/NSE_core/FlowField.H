@@ -38,6 +38,8 @@ class FlowField
 
         // function to enforce physical BC's and copy across ghost cells, in one shot
         void setBoundary();
+        // regridding functions
+        void redefine(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 

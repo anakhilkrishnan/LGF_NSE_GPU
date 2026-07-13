@@ -7,6 +7,19 @@ DomainManager::DomainManager(const SolverConfig& config)
     // alternatively, by excluding the call to any of the functions, the solver
     // can be run on the prespecified search grid.
 
+    // initializing domain handling parameters
+    regrid_int = config.regrid_int; // TEMP tuning parameter for now
+
+    // initializing domain parameters needed from config
+    n_cell = config.n_cell;
+    max_grid_size = config.max_grid_size;
+    dom_lo = config.dom_lo;
+    dom_hi = config.dom_hi;
+    n_buffer_box = config.n_buffer_box;
+    search_to_fine_ref_ratio = config.search_to_fine_ref_ratio;
+    supp_tag_eps = config.supp_tag_eps;
+
+
     // creating domain data objects
     amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
     amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell_search-1, config.n_cell_search-1, config.n_cell_search-1));
@@ -17,17 +30,12 @@ DomainManager::DomainManager(const SolverConfig& config)
     
     dm.define(ba);
 
-    amrex::RealBox real_box(config.dom_lo, config.dom_hi);
+    amrex::RealBox real_box(dom_lo, dom_hi);
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 
     DSupp.define(ba, dm, 1, 0);
     DSupp.setVal(0.0);
-
-    // initializing domain handling parameters
-    supp_tag_eps = config.supp_tag_eps;
-    regrid_int = config.regrid_int; // TEMP tuning parameter for now
-
 }
 
 amrex::BoxArray DomainManager::gatherBoxArr(const FlowField& state)
@@ -62,15 +70,15 @@ void DomainManager::growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_
     tag_ba.maxSize(max_grid_size);  // re-chunk to compute box size
 }
 
-void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba, const SolverConfig& config)
+void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba)
 {    
     // update members
     ba = tag_ba;
     dm.define(ba);
 
     // geom: same physical RealBox, but FINE resolution domain box
-    amrex::Box fine_domain(amrex::IntVect(0), amrex::IntVect(AMREX_D_DECL(config.n_cell-1, config.n_cell-1, config.n_cell-1)));
-    amrex::RealBox real_box({AMREX_D_DECL(config.dom_lo[0], config.dom_lo[1], config.dom_lo[2])}, {AMREX_D_DECL(config.dom_hi[0], config.dom_hi[1], config.dom_hi[2])});
+    amrex::Box fine_domain(amrex::IntVect(0), amrex::IntVect(AMREX_D_DECL(n_cell-1, n_cell-1, n_cell-1)));
+    amrex::RealBox real_box({AMREX_D_DECL(dom_lo[0], dom_lo[1], dom_lo[2])}, {AMREX_D_DECL(dom_hi[0], dom_hi[1], dom_hi[2])});
 
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0);
     geom.define(fine_domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
@@ -109,10 +117,10 @@ void DomainManager::initializeSnugDomain(const SolverConfig& config)
 
     amrex::BoxArray tag_ba = gatherBoxArr(search_state);
     
-    tag_ba.refine(config.search_to_fine_ref_ratio);   // now at fine resolution
+    tag_ba.refine(search_to_fine_ref_ratio);   // now at fine resolution
 
-    growBoxArr(tag_ba, config.n_buffer_box * config.max_grid_size, config.max_grid_size);
-    updateGeomBaDm(tag_ba, config);
+    growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
+    updateGeomBaDm(tag_ba);
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
@@ -193,6 +201,14 @@ void DomainManager::updateSnugDomain(const FlowField& state)
     // reads current flowfield state, grows boxarr outward a bit more to create
     // new search space; tags on updated search space; uses tag informatino to
     // update Geom, BoxArr, DistMap; 
+
+    tagSupportRegion(state);
+
+    amrex::BoxArray tag_ba = gatherBoxArr(state);
+
+    growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
+
+    updateGeomBaDm(tag_ba);
 }
 
 // Computes cell-centered vorticity for plotting, via the staggered discrete
