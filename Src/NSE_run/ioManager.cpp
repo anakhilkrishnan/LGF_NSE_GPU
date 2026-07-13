@@ -149,6 +149,7 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
 
     // building a multiFab with n dim + 2 components for plotting
     amrex::MultiFab plotFab(ba, dm, ncomp_plot, 0);
+    plotFab.setVal(0.0);
 
     // converting face-centered data to cell-centered data
     #if AMREX_SPACEDIM == 1

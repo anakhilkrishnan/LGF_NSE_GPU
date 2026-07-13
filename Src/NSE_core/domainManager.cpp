@@ -13,6 +13,8 @@ DomainManager::DomainManager(const SolverConfig& config)
     // initializing domain parameters needed from config
     n_cell = config.n_cell;
     max_grid_size = config.max_grid_size;
+    n_comp = config.n_comp;
+    n_ghost = config.n_ghost;
     dom_lo = config.dom_lo;
     dom_hi = config.dom_hi;
     n_buffer_box = config.n_buffer_box;
@@ -38,7 +40,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     DSupp.setVal(0.0);
 }
 
-amrex::BoxArray DomainManager::gatherBoxArr(const FlowField& state)
+amrex::BoxArray DomainManager::gatherTaggedBoxArr(const FlowField& state)
 {
     // ensuring the h_tag_arr is updated with respect to state
     AMREX_ALWAYS_ASSERT(h_tag_arr.size() == state.getPres().local_size());
@@ -87,7 +89,8 @@ void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba)
 const amrex::MultiFab& DomainManager::refreshAndGetDSuppFab()
 {
     // redefine DSupp to match current grid
-    DSupp.define(ba, dm, 1, 0);
+    DSupp.define(ba, dm, 1, 1);
+    DSupp.setVal(0.0);
 
     // export tagging data into plotting multifab
     for (MFIter mfi(DSupp); mfi.isValid(); ++mfi) 
@@ -96,10 +99,12 @@ const amrex::MultiFab& DomainManager::refreshAndGetDSuppFab()
         DSupp[mfi].setVal<RunOn::Device>(v);
     }
 
+    DSupp.FillBoundary(geom.periodicity());
+
     return DSupp;   // by REFERENCE
 }
 
-void DomainManager::initializeSnugDomain(const SolverConfig& config)
+void DomainManager::initializeSnugDomain()
 {
     BL_PROFILE("<Compute>initializeSnugDomain()")
     // create coarse multifab to store velocity and vorticity pass them for
@@ -107,7 +112,7 @@ void DomainManager::initializeSnugDomain(const SolverConfig& config)
     // refine Geom, BoxArr and DistMap to match desired resolution
 
     // create FlowField data using search params
-    FlowField search_state(geom, ba, dm, config);
+    FlowField search_state(geom, ba, dm, n_comp, n_ghost);
 
     // initializing coarse search domain with velocity
     initializeVelField(search_state);
@@ -115,7 +120,7 @@ void DomainManager::initializeSnugDomain(const SolverConfig& config)
 
     tagSupportRegion(search_state);
 
-    amrex::BoxArray tag_ba = gatherBoxArr(search_state);
+    amrex::BoxArray tag_ba = gatherTaggedBoxArr(search_state);
     
     tag_ba.refine(search_to_fine_ref_ratio);   // now at fine resolution
 
@@ -198,25 +203,141 @@ void DomainManager::tagSupportRegion(const FlowField& state)
 void DomainManager::updateSnugDomain(const FlowField& state)
 {
     BL_PROFILE("<Compute>updateSnugDomain()")
-    // reads current flowfield state, grows boxarr outward a bit more to create
-    // new search space; tags on updated search space; uses tag informatino to
-    // update Geom, BoxArr, DistMap; 
+    // reads current flowfield state (as new search space), tags on search space;
+    // uses tag information to update Geom, BoxArr, DistMap; 
 
     tagSupportRegion(state);
 
-    amrex::BoxArray tag_ba = gatherBoxArr(state);
+    amrex::BoxArray tag_ba = gatherTaggedBoxArr(state);
 
     growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
 
     updateGeomBaDm(tag_ba);
 }
 
-// Computes cell-centered vorticity for plotting, via the staggered discrete
-// curl (discreteCurlF2E) followed by native averaging to cell centers.
-// The edge/node intermediate is the SAME vorticity vort2vel consumes.
-amrex::MultiFab computePlotVorticity(const FlowField& state)
+void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
 {
-    BL_PROFILE("computePlotVorticity()");
+    BL_PROFILE("<Compute> DomainManager::vor2vel()");
+
+    // extract nodal vorticity
+    amrex::MultiFab vort_nd = computeNodalVorticity(state);
+
+    // allocate target multifab
+    amrex::MultiFab psi_nd(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
+    psi_nd.setVal(0.0);
+
+    // 3. Generate the cell-centered mask to skip interior math
+    const amrex::MultiFab& mask = refreshAndGetDSuppFab();
+
+    // 4. Compute streamfunction ONLY on buffer nodes
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi_nd, supp_tag_arr, &mask);
+
+    // update velocities in Dbuff
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+
+    // X-Velocity (u = d(psi)/dy)
+    for (amrex::MFIter mfi(state.getVel(0), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& u_arr = state.getVel(0).array(mfi);
+        auto const& psi   = psi_nd.const_array(mfi);
+        auto const& m_arr = mask.const_array(mfi); // Cell-centered mask
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            // An x-face borders cell(i-1,j,k) and cell(i,j,k). 
+            // If EITHER bounding cell is buffer (0.0), overwrite the velocity.
+            if (m_arr(i-1, j, k) < 0.5 || m_arr(i, j, k) < 0.5)
+            {
+                u_arr(i, j, k) = (psi(i, j+1, k) - psi(i, j, k)) * invdx[1];
+            }
+        });
+    }
+
+    // Y-Velocity (v = -d(psi)/dx)
+    for (amrex::MFIter mfi(state.getVel(1), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& v_arr = state.getVel(1).array(mfi);
+        auto const& psi   = psi_nd.const_array(mfi);
+        auto const& m_arr = mask.const_array(mfi);
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            // A y-face borders cell(i,j-1,k) and cell(i,j,k).
+            if (m_arr(i, j-1, k) < 0.5 || m_arr(i, j, k) < 0.5)
+            {
+                v_arr(i, j, k) = -(psi(i+1, j, k) - psi(i, j, k)) * invdx[0];
+            }
+        });
+    }
+
+    // Refresh ghosts since buffer data was manually overwritten
+    state.setBoundary();
+}
+
+void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
+{
+    // recognizes geom, ba, dm members have been updated, do not match current input state
+    
+    // create new state with new geom, ba, dm
+    FlowField new_state(geom, ba, dm, n_comp, n_ghost);
+
+    // copy Dxsoln from old state into new state
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
+        new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
+    }
+    new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
+    new_state.setBoundary();
+
+    // mask transplant to new grid
+    amrex::MultiFab new_DSupp(ba, dm, 1, 1);
+    new_DSupp.setVal(0.0); 
+    new_DSupp.ParallelCopy(DSupp, 0, 0, 1, 0, 0);
+    DSupp = std::move(new_DSupp);
+    DSupp.FillBoundary(geom.periodicity());
+
+    // update supp_tag_arr and htag)arr
+    const int num_local_boxes = DSupp.local_size();
+    if (supp_tag_arr.size() != num_local_boxes) 
+    {
+        supp_tag_arr.resize(num_local_boxes);
+    }
+
+    int* d_flags_ptr = supp_tag_arr.dataPtr();
+    amrex::ParallelFor(num_local_boxes, [=] AMREX_GPU_DEVICE (int i)
+    {
+        d_flags_ptr[i] = 0;
+    });
+
+    auto const& dsupp_arrs = DSupp.const_arrays();
+    amrex::ParallelFor(DSupp, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
+    {
+        if (d_flags_ptr[box_no] != 0) return;
+        if (dsupp_arrs[box_no](i,j,k) == 1.0)
+        {
+            amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
+        }
+    });
+
+    h_tag_arr.resize(supp_tag_arr.size());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
+
+    // use supp_tag_arr (now updated with Dsupp found when creating new geom, ba, dm)
+    // to avoid vel refresh on Dsupp. Only Dbuff needs the update
+    vor2vel(new_state, lgf_nodal_poisson_solver);
+
+    // move new_state back into state to continue
+    state = std::move(new_state);
+}
+
+// computes nodal vorticity for vor2vel(), via the discreteCurlF2E.
+amrex::MultiFab computeNodalVorticity(const FlowField& state)
+{
+    // IMPORTANT: Limited to 2D at present
+    BL_PROFILE("<Compute> computeNodalVorticity()")
 
     const amrex::Geometry& geom = state.getGeom();
     const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
@@ -224,13 +345,6 @@ amrex::MultiFab computePlotVorticity(const FlowField& state)
     const amrex::BoxArray& ba = state.getPres().boxArray();
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
 
-    const int ncomp = (AMREX_SPACEDIM == 2) ? 1 : 3;
-    amrex::MultiFab vort_cc(ba, dm, ncomp, 0);
-
-    // package velocity Array4s once (per-box handles fetched inside MFIter)
-    // ---- build the staggered curl, then average to cell centers ----
-
-#if AMREX_SPACEDIM == 2
     // 2D: omega_z lives at NODES. One nodal MultiFab.
     amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
     amrex::MultiFab vort_nd(ba_nd, dm, 1, 0);
@@ -248,53 +362,22 @@ amrex::MultiFab computePlotVorticity(const FlowField& state)
             out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
         });
     }
-    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, ncomp, 0);
 
-#elif AMREX_SPACEDIM == 3
-    // 3D: each omega component lives on a DIFFERENT edge type.
-    // omega_x on x-edges (nodal in y,z), omega_y on y-edges, omega_z on z-edges.
-    amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vort_edge;
-    for (int n = 0; n < AMREX_SPACEDIM; ++n)
-    {
-        // edge type for component n: nodal in the two directions != n
-        amrex::IntVect etype = amrex::IntVect::TheNodeVector();
-        etype[n] = 0;  // cell-centered along axis n -> that axis's edge
-        amrex::BoxArray ba_e = amrex::convert(ba, etype);
-        vort_edge[n].define(ba_e, dm, 1, 0);
-    }
+    return vort_nd;
+}
 
-    for (amrex::MFIter mfi(vort_cc, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
-            state.getVel(0).const_array(mfi),
-            state.getVel(1).const_array(mfi),
-            state.getVel(2).const_array(mfi)
-        };
-        auto const& ox = vort_edge[0].array(mfi);
-        auto const& oy = vort_edge[1].array(mfi);
-        auto const& oz = vort_edge[2].array(mfi);
+// computes cell-centered vorticity for plotting
+amrex::MultiFab computePlotVorticity(const FlowField& state)
+{
+    BL_PROFILE("<Compute> computePlotVorticity()");
 
-        // each component on its own edge box
-        const amrex::Box bx0 = mfi.tilebox(vort_edge[0].ixType().toIntVect());
-        const amrex::Box bx1 = mfi.tilebox(vort_edge[1].ixType().toIntVect());
-        const amrex::Box bx2 = mfi.tilebox(vort_edge[2].ixType().toIntVect());
+    amrex::MultiFab vort_nd = computeNodalVorticity(state);
 
-        amrex::ParallelFor(bx0, [=] AMREX_GPU_DEVICE (int i,int j,int k){
-            ox(i,j,k) = discreteCurlF2E<0>(i,j,k,invdx,vel);
-        });
-        amrex::ParallelFor(bx1, [=] AMREX_GPU_DEVICE (int i,int j,int k){
-            oy(i,j,k) = discreteCurlF2E<1>(i,j,k,invdx,vel);
-        });
-        amrex::ParallelFor(bx2, [=] AMREX_GPU_DEVICE (int i,int j,int k){
-            oz(i,j,k) = discreteCurlF2E<2>(i,j,k,invdx,vel);
-        });
-    }
+    const amrex::BoxArray& ba = state.getPres().boxArray();
+    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
 
-    amrex::average_edge_to_cellcenter(
-        vort_cc, 0,
-        amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{
-            &vort_edge[0], &vort_edge[1], &vort_edge[2]}, 0);
-#endif
+    amrex::MultiFab vort_cc(ba, dm, 1, 0);
+    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, 1, 0);
 
     return vort_cc;
 }

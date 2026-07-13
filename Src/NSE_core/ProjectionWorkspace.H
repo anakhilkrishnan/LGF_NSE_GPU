@@ -14,7 +14,7 @@
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
 #include <RKCoefficients.H>
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
 
 using namespace amrex;
 
@@ -29,8 +29,6 @@ class ProjectionWorkspace
 
         amrex::Real dt;
         amrex::Real invRe;
-
-        directSumLGF lgf_poisson_solver;
 
         FlowField stage;
 
@@ -47,6 +45,9 @@ class ProjectionWorkspace
         
 
     public: 
+
+        // public, so it can be passed to DomainManager when field needs to be updated
+        DirectSumLGF lgf_poisson_solver;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 

@@ -1,7 +1,7 @@
 #include <ProjectionWorkspace.H>
 
 ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config)
-    : stage(geom_in, ba_in, dm_in, config), lgf_poisson_solver(geom_in, config.n_lookup)
+    : stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost), lgf_poisson_solver(geom_in, config.n_lookup)
 {
     // initializing required solver parameters
     n_lookup = config.n_lookup;

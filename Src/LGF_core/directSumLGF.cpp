@@ -1,6 +1,6 @@
-#include <directSumLGF.H>
+#include <DirectSumLGF.H>
 
-directSumLGF::directSumLGF(const amrex::Geometry& geom_in, const int n_look_in) 
+DirectSumLGF::DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in) 
     : geom(geom_in), n_lookup(n_look_in)
 {
 
@@ -11,7 +11,7 @@ directSumLGF::directSumLGF(const amrex::Geometry& geom_in, const int n_look_in)
 // Note: This function isn't given any openmp support because half of it requires serial looping and the other half isn't
 // a bottleneck at all. If it does turn out to be, one can add over the MFIter calling ParallelFor() the desired
 // pragma openmp for cpu builds
-void directSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     BL_PROFILE("<Communicate> consolidateMultiFab()");
 
@@ -200,12 +200,12 @@ void directSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
     }
 }
 
-void directSumLGF::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
+void DirectSumLGF::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
 {
     geom = new_geom;
 }
 
-void directSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     // adding profiling blocks for Tiny/Base profilers
     BL_PROFILE("<Compute> solvePoisson()");
@@ -289,6 +289,99 @@ void directSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
                             
                             
                             // add the contribution of source cell based on lgf
+                            total_contribution += (data_ptr[idx++] * lgf * dvol);
+                        }
+                    }
+                }
+            }
+            phi(i, j, k) = total_contribution;
+        });
+    }
+}
+
+void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr, const amrex::MultiFab* mask)
+{
+    BL_PROFILE("<Compute> solveNodalPoisson()");
+
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> prob_lo = geom.ProbLoArray();
+
+    // Pack the nodal source data
+    consolidateMultiFab(source, source_box_tag_arr);
+
+    int num_blocks = consolMetadata.size();
+    const amrex::Real* data_ptr = consolData.dataPtr();
+    const FabMetaData* meta_ptr = consolMetadata.dataPtr();
+
+    // Convert the cell-centered domain to a nodal domain for boundary checks
+    amrex::Box dom = amrex::convert(geom.Domain(), amrex::IntVect::TheNodeVector());
+    
+#ifdef AMREX_USE_OMP
+    #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    for (amrex::MFIter mfi(target, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& targetbox = mfi.growntilebox(target.nGrow());
+        const amrex::Box& valid_box = mfi.tilebox();
+        const amrex::Array4<amrex::Real>& phi = target.array(mfi);
+        
+        // Extract the mask array if one was provided
+        amrex::Array4<amrex::Real const> mask_arr;
+        if (mask != nullptr) 
+        {
+            mask_arr = mask->const_array(mfi);
+        }
+
+        const int n_lookup_local = n_lookup;
+
+        amrex::ParallelFor(targetbox, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {   
+            amrex::IntVect cell(AMREX_D_DECL(i,j,k));
+            
+            if (!valid_box.contains(cell))
+            {
+                if (dom.contains(cell)) return;
+            }
+            
+            if (mask != nullptr && mask_arr(i, j, k) == 1.0) 
+            {
+                return;
+            }
+
+            // NODAL TARGET: Removed the + 0.5 offset
+            amrex::Real AMREX_D_DECL(x_tar = prob_lo[0] + (i * dx[0]),
+                                      y_tar = prob_lo[1] + (j * dx[1]),
+                                      z_tar = prob_lo[2] + (k * dx[2]));
+
+            amrex::Real total_contribution = 0.0;
+
+            for (int b = 0; b < num_blocks; ++b) 
+            {
+                const auto& block = meta_ptr[b];
+                int idx = block.offset;
+                amrex::Real dvol = AMREX_D_TERM(block.dx[0], * block.dx[1], * block.dx[2]);
+                
+                for (int sk = AMREX_D_PICK(0, 0, block.lo[2]); sk <= AMREX_D_PICK(0, 0, block.hi[2]); ++sk) 
+                {
+                    #if AMREX_SPACEDIM == 3
+                        amrex::Real z_src = prob_lo[2] + (sk * block.dx[2]); // NODAL
+                    #endif
+
+                    for (int sj = AMREX_D_PICK(0, block.lo[1], block.lo[1]); sj <= AMREX_D_PICK(0, block.hi[1], block.hi[1]); ++sj) 
+                    {
+                        #if AMREX_SPACEDIM >= 2
+                            amrex::Real y_src = prob_lo[1] + (sj * block.dx[1]); // NODAL
+                        #endif
+
+                        for (int si = block.lo[0]; si <= block.hi[0]; ++si) 
+                        {
+                            amrex::Real x_src = prob_lo[0] + (si * block.dx[0]); // NODAL
+                            
+                            amrex::Real lgf = computeLGF(n_lookup_local, 
+                                                        AMREX_D_DECL(x_tar, y_tar, z_tar),
+                                                        AMREX_D_DECL(x_src, y_src, z_src),
+                                                        AMREX_D_DECL(block.dx[0], block.dx[1], block.dx[2]));
+                                                            
                             total_contribution += (data_ptr[idx++] * lgf * dvol);
                         }
                     }

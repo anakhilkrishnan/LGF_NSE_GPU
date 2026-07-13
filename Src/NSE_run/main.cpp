@@ -39,10 +39,10 @@ void extendedMain()
     DomainManager dmgr(sol_cfg);
     
     // extract correct region and update geom, boxarr and distmap
-    dmgr.initializeSnugDomain(sol_cfg);
+    dmgr.initializeSnugDomain();
 
     // create flow field object
-    FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
+    FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg.n_comp, sol_cfg.n_ghost);
     // create solver object
     ProjectionWorkspace workspace(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
 
@@ -136,13 +136,14 @@ void extendedMain()
         }
 
         // update domain based on results from timestep
-        // CAN ALSO BE PLACED IN IF (step % regrid interval) for speed
         if (step % dmgr.computeRegridInterval(state_n) == 0)
         {
             dmgr.updateSnugDomain(state_n);
-            state_n.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
+            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             dmgr.tagSupportRegion(state_n);
+            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // track duration of timestep
