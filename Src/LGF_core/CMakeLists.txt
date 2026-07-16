@@ -2,7 +2,7 @@
 add_library(LGF_core_lib STATIC
     LGFKernels.H
     directSumKernel.H
-    directSumLGF.H
+    DirectSumLGF.H
     directSumLGF.cpp
 )
 

@@ -75,7 +75,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+        io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
 
     }
 
@@ -123,7 +123,7 @@ void extendedMain()
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
@@ -140,10 +140,10 @@ void extendedMain()
         {
             // dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
-            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             dmgr.tagSupportRegion(state_n);
-            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // track duration of timestep

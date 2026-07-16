@@ -120,6 +120,9 @@ void DomainManager::initializeSnugDomain()
 
     tagSupportRegion(search_state);
 
+    psi.define(vort.boxArray(), vort.DistributionMap(), vort.nComp(), vort.nGrow());
+    psi.setVal(0.0);
+
     amrex::BoxArray tag_ba = gatherTaggedBoxArr(search_state);
     
     tag_ba.refine(search_to_fine_ref_ratio);   // now at fine resolution
@@ -223,15 +226,15 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     amrex::MultiFab vort_nd = computeNodalVorticity(state);
 
     // allocate target multifab
-    amrex::MultiFab psi_nd(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
-    psi_nd.setVal(0.0);
+    psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
+    psi.setVal(0.0);
 
     // 3. Generate the cell-centered mask to skip interior math
     const amrex::MultiFab& mask = refreshAndGetDSuppFab();
 
     // 4. Compute streamfunction ONLY on buffer nodes
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi_nd, supp_tag_arr, &mask);
-    psi_nd.FillBoundary(geom.periodicity());
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr, &mask);
+    psi.FillBoundary(geom.periodicity());
 
     // update velocities in Dbuff
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
@@ -241,7 +244,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         auto const& u_arr = state.getVel(0).array(mfi);
-        auto const& psi   = psi_nd.const_array(mfi);
+        auto const& psi_arr   = psi.const_array(mfi);
         auto const& m_arr = mask.const_array(mfi); // Cell-centered mask
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -250,7 +253,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
             // If EITHER bounding cell is buffer (0.0), overwrite the velocity.
             if (m_arr(i-1, j, k) < 0.5 || m_arr(i, j, k) < 0.5)
             {
-                u_arr(i, j, k) = (psi(i, j+1, k) - psi(i, j, k)) * invdx[1];
+                u_arr(i, j, k) = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
             }
         });
     }
@@ -260,7 +263,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         auto const& v_arr = state.getVel(1).array(mfi);
-        auto const& psi   = psi_nd.const_array(mfi);
+        auto const& psi_arr   = psi.const_array(mfi);
         auto const& m_arr = mask.const_array(mfi);
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -268,7 +271,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
             // A y-face borders cell(i,j-1,k) and cell(i,j,k).
             if (m_arr(i, j-1, k) < 0.5 || m_arr(i, j, k) < 0.5)
             {
-                v_arr(i, j, k) = -(psi(i+1, j, k) - psi(i, j, k)) * invdx[0];
+                v_arr(i, j, k) = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
             }
         });
     }

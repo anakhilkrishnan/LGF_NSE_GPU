@@ -56,6 +56,7 @@ class DomainManager
 
     public:
         // scratch type variables
+        amrex::MultiFab psi;
         amrex::MultiFab vort;
         amrex::MultiFab divN;
 

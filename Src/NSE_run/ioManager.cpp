@@ -141,47 +141,58 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
-void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const MultiFab& tagRegion, const MultiFab& divN, const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm)
+void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, const MultiFab& divU_star, const MultiFab& tagRegion, const MultiFab& divN, const MultiFab& psi, const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm)
 {
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
-    int ncomp_plot = AMREX_SPACEDIM + ncomp_vort + 5;
 
     // building a multiFab with n dim + 2 components for plotting
-    amrex::MultiFab plotFab(ba, dm, ncomp_plot, 0);
-    plotFab.setVal(0.0);
+    amrex::MultiFab plotFab_cc(ba, dm, AMREX_SPACEDIM + 5, 0);
+    amrex::MultiFab plotFab_nd(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, (2 * ncomp_vort), 0);
+    plotFab_cc.setVal(0.0);
+    plotFab_nd.setVal(0.0);
 
-    // converting face-centered data to cell-centered data
-    #if AMREX_SPACEDIM == 1
-        amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0)});
-    #elif AMREX_SPACEDIM == 2
-        amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0), &state.getVel(1)});
-    #elif AMREX_SPACEDIM == 3
-        amrex::average_face_to_cellcenter(plotFab, 0, amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>{&state.getVel(0), &state.getVel(1), &state.getVel(2)});
-    #endif
+    // Create an array of pointers to the face-centered MultiFabs
+    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_vels;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        face_vels[d] = &state.getVel(d);
+    }
+
+    // Averages all dimensions simultaneously into plotFab starting at component 0
+    amrex::average_face_to_cellcenter(plotFab_cc, 0, face_vels);
     
-    plotFab.ParallelCopy(state.getPres(), 0, AMREX_SPACEDIM, 1, 0, 0);
-    plotFab.ParallelCopy(tagRegion, 0, AMREX_SPACEDIM + 1, 1, 0, 0);
-    plotFab.ParallelCopy(divU_star, 0, AMREX_SPACEDIM + 2, 1, 0, 0);
-    plotFab.ParallelCopy(computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0, 0);
-    plotFab.ParallelCopy(divN, 0, AMREX_SPACEDIM + 4, 1, 0, 0);
-    plotFab.ParallelCopy(computePlotVorticity(state), 0, AMREX_SPACEDIM + 5, ncomp_vort, 0, 0);
+    plotFab_cc.ParallelCopy(state.getPres(), 0, AMREX_SPACEDIM, 1, 0, 0);
+    plotFab_cc.ParallelCopy(tagRegion, 0, AMREX_SPACEDIM + 1, 1, 0, 0);
+    plotFab_cc.ParallelCopy(divU_star, 0, AMREX_SPACEDIM + 2, 1, 0, 0);
+    plotFab_cc.ParallelCopy(computePlotDivU(state), 0, AMREX_SPACEDIM + 3, 1, 0, 0);
+    plotFab_cc.ParallelCopy(divN, 0, AMREX_SPACEDIM + 4, 1, 0, 0);
+
+    plotFab_nd.ParallelCopy(psi, 0, 0, ncomp_vort, 0, 0);
+    plotFab_nd.ParallelCopy(computePlotVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
 
     // exporting the names of the MultiFabs
-    amrex::Vector<std::string> varnames = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"), "pressure", "active_box_tag", "divU", "divUAtEnd", "divN"};
+    amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"), "pressure", "active_box_tag", "divU", "divUAtEnd", "divN"};
+    amrex::Vector<std::string> varnames_nd;
+
     #if AMREX_SPACEDIM == 2
-        varnames.push_back("z_vorticity");
+        varnames_nd.push_back("z_psi");
+        varnames_nd.push_back("z_vorticity");
     #elif AMREX_SPACEDIM == 3
-        varnames.push_back("x_vorticity");
-        varnames.push_back("y_vorticity");
-        varnames.push_back("z_vorticity");
+        varnames_nd.push_back("x_psi");
+        varnames_nd.push_back("y_psi");
+        varnames_nd.push_back("z_psi");
+        varnames_nd.push_back("x_vorticity");
+        varnames_nd.push_back("y_vorticity");
+        varnames_nd.push_back("z_vorticity");
     #endif
 
     // writing a simple plotfile
     const std::string& plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
-    amrex::Print() << "Writing plotfile to: " << plotfile_name << "\n";
-    WriteSingleLevelPlotfile(plotfile_name, plotFab, varnames, geom, time, step);
-    amrex::Print() << "Plotfile written to: " << plotfile_name << "\n";
+    amrex::Print() << "Writing plotfiles to: " << plotfile_name << "\n";
+    WriteSingleLevelPlotfile((plotfile_name + "_cc"), plotFab_cc, varnames_cc, geom, time, step);
+    WriteSingleLevelPlotfile((plotfile_name + "_nd"), plotFab_nd, varnames_nd, geom, time, step);
+    amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 
 void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
