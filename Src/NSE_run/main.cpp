@@ -138,7 +138,7 @@ void extendedMain()
         // update domain based on results from timestep
         if (step % dmgr.computeRegridInterval(state_n) == 0)
         {
-            dmgr.updateSnugDomain(state_n);
+            // dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
             io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());

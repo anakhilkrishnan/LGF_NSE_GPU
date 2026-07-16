@@ -343,7 +343,7 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
                 if (dom.contains(cell)) return;
             }
             
-            if (mask != nullptr && mask_arr(i, j, k) == 1.0) 
+            if (mask != nullptr && mask_arr(i, j, k) > 0.5 && mask_arr(i-1, j, k) > 0.5 && mask_arr(i, j-1, k) > 0.5 && mask_arr(i-1, j-1, k) > 0.5) 
             {
                 return;
             }

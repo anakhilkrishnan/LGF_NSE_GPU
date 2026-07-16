@@ -231,6 +231,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
 
     // 4. Compute streamfunction ONLY on buffer nodes
     lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi_nd, supp_tag_arr, &mask);
+    psi_nd.FillBoundary(geom.periodicity());
 
     // update velocities in Dbuff
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
@@ -347,7 +348,7 @@ amrex::MultiFab computeNodalVorticity(const FlowField& state)
 
     // 2D: omega_z lives at NODES. One nodal MultiFab.
     amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
-    amrex::MultiFab vort_nd(ba_nd, dm, 1, 0);
+    amrex::MultiFab vort_nd(ba_nd, dm, 1, 1);
 
     for (amrex::MFIter mfi(vort_nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
@@ -362,6 +363,9 @@ amrex::MultiFab computeNodalVorticity(const FlowField& state)
             out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
         });
     }
+
+    // update ghost cells before returning
+    vort_nd.FillBoundary(geom.periodicity());
 
     return vort_nd;
 }

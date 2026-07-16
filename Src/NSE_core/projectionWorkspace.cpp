@@ -174,6 +174,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
     }
 
     lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), box_tag_arr);
+    init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
 
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);
@@ -406,11 +407,10 @@ void ProjectionWorkspace::computePressure()
 
     // performing addition of box values 
     lgf_poisson_solver.solvePoisson(divU, pres_corr, box_tag_arr);
+    pres_corr.FillBoundary(stage.getGeom().periodicity());
     
     // write out divU_max_norm
     divU_max_norm = divU.norm0(0, 0, false);
-
-    pres_corr.FillBoundary(stage.getGeom().periodicity());
 }
 
 void ProjectionWorkspace::computeVelocityCorrection()
