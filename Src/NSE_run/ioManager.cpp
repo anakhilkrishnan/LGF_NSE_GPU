@@ -169,7 +169,7 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
     plotFab_cc.ParallelCopy(divN, 0, AMREX_SPACEDIM + 4, 1, 0, 0);
 
     plotFab_nd.ParallelCopy(psi, 0, 0, ncomp_vort, 0, 0);
-    plotFab_nd.ParallelCopy(computePlotVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
+    plotFab_nd.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
 
     // exporting the names of the MultiFabs
     amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"), "pressure", "active_box_tag", "divU", "divUAtEnd", "divN"};

@@ -25,7 +25,7 @@ inline amrex::Vector<RKCoeffs> getRKCoeffs(int rk_order)
     {
         // SSP-RK2 (2 Stages)
         coeffs.push_back({0.0, 1.0, 1.0});
-        coeffs.push_back({0.5, 0.5, 1.0});
+        coeffs.push_back({0.5, 0.5, 2.0});
     }
     else if (rk_order == 3) 
     {

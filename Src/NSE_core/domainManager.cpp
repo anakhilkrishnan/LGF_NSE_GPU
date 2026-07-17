@@ -229,11 +229,12 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
     psi.setVal(0.0);
 
-    // 3. Generate the cell-centered mask to skip interior math
+    // generate the cell-centered mask to skip interior math
     const amrex::MultiFab& mask = refreshAndGetDSuppFab();
 
-    // 4. Compute streamfunction ONLY on buffer nodes
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr, &mask);
+    // compute streamfunction ONLY on buffer nodes
+    vort_nd.mult(-1.0); // source term is -omega_z
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort, psi, supp_tag_arr, &mask);
     psi.FillBoundary(geom.periodicity());
 
     // update velocities in Dbuff
