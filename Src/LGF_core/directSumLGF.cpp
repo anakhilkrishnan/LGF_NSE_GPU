@@ -3,7 +3,8 @@
 DirectSumLGF::DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in) 
     : geom(geom_in), n_lookup(n_look_in)
 {
-
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_lookup <= 32 && n_lookup >= 1,
+                                     "n_lookup must be in [1,32] to stay inside exact_core");
 }
 
 // Note: This function does not use tiling because all indexing and box tag reading requires use of boxes as the smallest
@@ -17,6 +18,16 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
 
     const int nprocs = amrex::ParallelDescriptor::NProcs();
     const int num_local_boxes = phi.local_size();
+
+    const bool is_nodal = (phi.ixType() == amrex::IndexType::TheNodeType());
+
+    // On a nodal MultiFab, validbox()es SHARE their boundary nodes, so a naive
+    // pack counts seam nodes once per owning box. OwnerMask marks exactly one
+    // owner per node; non-owners are packed as 0.0 so each node contributes once.
+    std::unique_ptr<amrex::iMultiFab> owner;
+    if (is_nodal) {
+        owner = amrex::OwnerMask(phi, geom.periodicity());   // already a unique_ptr, just move-assign
+    }
 
     // copy the box tagging array to host to setup h_local_meta to handle device side copy
     h_source_box_tag_arr.resize(num_local_boxes);
@@ -77,6 +88,10 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
         const auto lo = bx.smallEnd();
         const auto len = bx.length();
 
+        amrex::Array4<int const> own_arr;
+        if (is_nodal) { own_arr = owner->const_array(mfi); }
+        const bool skip_unowned = is_nodal;
+
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
             // flatten 3D coordinates to 1D continuous memory array
@@ -89,7 +104,9 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
 
             int flat_idx = ii + (jj * len_x) + (kk * len_x * len_y);
 
-            d_data_ptr[offset + flat_idx] = phi_arr(i, j, k);
+            d_data_ptr[offset + flat_idx] =
+                (skip_unowned && own_arr(i,j,k) == 0) ? amrex::Real(0.0)
+                                                      : phi_arr(i, j, k);
         });
     }
 
@@ -299,23 +316,25 @@ void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
     }
 }
 
-void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr, const amrex::MultiFab* mask)
+void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
 {
     BL_PROFILE("<Compute> solveNodalPoisson()");
+
+    AMREX_ALWAYS_ASSERT(source.ixType() == amrex::IndexType::TheNodeType());
+    AMREX_ALWAYS_ASSERT(target.ixType() == amrex::IndexType::TheNodeType());
+    AMREX_ALWAYS_ASSERT(source.boxArray().size() == target.boxArray().size());
 
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> prob_lo = geom.ProbLoArray();
 
-    // Pack the nodal source data
     consolidateMultiFab(source, source_box_tag_arr);
 
     int num_blocks = consolMetadata.size();
     const amrex::Real* data_ptr = consolData.dataPtr();
     const FabMetaData* meta_ptr = consolMetadata.dataPtr();
 
-    // Convert the cell-centered domain to a nodal domain for boundary checks
     amrex::Box dom = amrex::convert(geom.Domain(), amrex::IntVect::TheNodeVector());
-    
+
 #ifdef AMREX_USE_OMP
     #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
@@ -324,34 +343,18 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
         const amrex::Box& targetbox = mfi.growntilebox(target.nGrow());
         const amrex::Box& valid_box = mfi.tilebox();
         const amrex::Array4<amrex::Real>& phi = target.array(mfi);
-        
-        // Extract the mask array if one was provided
-        amrex::Array4<amrex::Real const> mask_arr;
-        if (mask != nullptr) 
-        {
-            mask_arr = mask->const_array(mfi);
-        }
 
         const int n_lookup_local = n_lookup;
 
         amrex::ParallelFor(targetbox, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {   
-            amrex::IntVect cell(AMREX_D_DECL(i,j,k));
-            
-            if (!valid_box.contains(cell))
-            {
-                if (dom.contains(cell)) return;
-            }
-            
-            if (mask != nullptr && mask_arr(i, j, k) > 0.5 && mask_arr(i-1, j, k) > 0.5 && mask_arr(i, j-1, k) > 0.5 && mask_arr(i-1, j-1, k) > 0.5) 
-            {
-                return;
-            }
+            amrex::IntVect node(AMREX_D_DECL(i,j,k));
+            if (!valid_box.contains(node)) { if (dom.contains(node)) { return; } }
 
-            // NODAL TARGET: Removed the + 0.5 offset
-            amrex::Real AMREX_D_DECL(x_tar = prob_lo[0] + (i * dx[0]),
-                                      y_tar = prob_lo[1] + (j * dx[1]),
-                                      z_tar = prob_lo[2] + (k * dx[2]));
+            // NODAL: no +0.5
+            amrex::Real AMREX_D_DECL(x_tar = prob_lo[0] + i * dx[0],
+                                     y_tar = prob_lo[1] + j * dx[1],
+                                     z_tar = prob_lo[2] + k * dx[2]);
 
             amrex::Real total_contribution = 0.0;
 
@@ -364,24 +367,20 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
                 for (int sk = AMREX_D_PICK(0, 0, block.lo[2]); sk <= AMREX_D_PICK(0, 0, block.hi[2]); ++sk) 
                 {
                     #if AMREX_SPACEDIM == 3
-                        amrex::Real z_src = prob_lo[2] + (sk * block.dx[2]); // NODAL
+                        amrex::Real z_src = prob_lo[2] + (sk * block.dx[2]);
                     #endif
-
                     for (int sj = AMREX_D_PICK(0, block.lo[1], block.lo[1]); sj <= AMREX_D_PICK(0, block.hi[1], block.hi[1]); ++sj) 
                     {
                         #if AMREX_SPACEDIM >= 2
-                            amrex::Real y_src = prob_lo[1] + (sj * block.dx[1]); // NODAL
+                            amrex::Real y_src = prob_lo[1] + (sj * block.dx[1]);
                         #endif
-
                         for (int si = block.lo[0]; si <= block.hi[0]; ++si) 
                         {
-                            amrex::Real x_src = prob_lo[0] + (si * block.dx[0]); // NODAL
-                            
+                            amrex::Real x_src = prob_lo[0] + (si * block.dx[0]);
                             amrex::Real lgf = computeLGF(n_lookup_local, 
                                                         AMREX_D_DECL(x_tar, y_tar, z_tar),
                                                         AMREX_D_DECL(x_src, y_src, z_src),
                                                         AMREX_D_DECL(block.dx[0], block.dx[1], block.dx[2]));
-                                                            
                             total_contribution += (data_ptr[idx++] * lgf * dvol);
                         }
                     }

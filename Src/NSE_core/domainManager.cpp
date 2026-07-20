@@ -234,7 +234,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
 
     // compute streamfunction ONLY on buffer nodes
     vort_nd.mult(-1.0); // source term is -omega_z
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort, psi, supp_tag_arr, &mask);
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr);
     psi.FillBoundary(geom.periodicity());
 
     // update velocities in Dbuff

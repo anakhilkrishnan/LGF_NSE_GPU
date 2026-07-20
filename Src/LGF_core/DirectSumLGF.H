@@ -2,6 +2,7 @@
 #define DIRECTSUMLGF_H_
 
 #include <directSumKernel.H>
+#include <AMReX_iMultiFab.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_BLProfiler.H>
@@ -54,7 +55,7 @@ class DirectSumLGF
 
     DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in);
     void solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
-    void solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr, const amrex::MultiFab* mask);
+    void solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
 };
 
 #endif
