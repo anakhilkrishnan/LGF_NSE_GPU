@@ -45,7 +45,7 @@ class DomainManager
         // inputs needed from Solver config
         int regrid_int;
 
-        int n_cell, max_grid_size, n_buffer_box, search_to_fine_ref_ratio, n_comp, n_ghost;
+        int n_cell, max_grid_size, n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_comp, n_ghost;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
         amrex::Real supp_tag_eps;
 

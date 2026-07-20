@@ -20,7 +20,8 @@ struct SolverConfig
     int n_ghost;
     int n_comp = 1;
     int regrid_int = 5;
-    int n_buffer_box = 1;
+    int n_buffer_box = 2;
+    int n_shed_box = 1;
     amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
 
     // time stepping parameters
@@ -49,6 +50,7 @@ struct SolverConfig
         pp.query("n_comp", n_comp);
         pp.query("regrid_int", regrid_int);
         pp.query("n_buffer_box", n_buffer_box);
+        pp.query("n_shed_box", n_shed_box);
         pp.get("domain_lo", dom_lo);
         pp.get("domain_hi", dom_hi);
 

@@ -18,6 +18,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     dom_lo = config.dom_lo;
     dom_hi = config.dom_hi;
     n_buffer_box = config.n_buffer_box;
+    n_shed_box = config.n_shed_box;
     search_to_fine_ref_ratio = config.search_to_fine_ref_ratio;
     supp_tag_eps = config.supp_tag_eps;
 
@@ -65,11 +66,11 @@ amrex::BoxArray DomainManager::gatherTaggedBoxArr(const FlowField& state)
     return tag_ba;
 }
 
-void DomainManager::growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size)
+void DomainManager::growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size_req)
 {
     tag_ba.grow(nBuff);          // grow each box (now overlapping)
     tag_ba.removeOverlap(true);     // BoxArray method: removes overlap AND simplifies
-    tag_ba.maxSize(max_grid_size);  // re-chunk to compute box size
+    tag_ba.maxSize(max_grid_size_req);  // re-chunk to compute box size
 }
 
 void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba)

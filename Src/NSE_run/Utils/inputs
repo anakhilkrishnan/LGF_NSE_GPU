@@ -9,6 +9,7 @@ n_ghost = 2 # must be >= 2
 n_comp = 1
 regrid_int = 1
 n_buffer_box = 2
+n_shed_box = 1
 domain_lo = -2.0 -2.0 -2.0
 domain_hi = 2.0 2.0 2.0
 
