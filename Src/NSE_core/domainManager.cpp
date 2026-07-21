@@ -41,42 +41,17 @@ DomainManager::DomainManager(const SolverConfig& config)
     DSupp.setVal(0.0);
 }
 
-amrex::BoxArray DomainManager::gatherTaggedBoxArr(const FlowField& state)
+void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_grid_size_req)
 {
-    // ensuring the h_tag_arr is updated with respect to state
-    AMREX_ALWAYS_ASSERT(h_tag_arr.size() == state.getPres().local_size());
-
-    // create a box vector containing only the tagged boxes
-    amrex::Vector<amrex::Box> local_tagged_boxes;
-    {
-        int local_i = 0;
-        for (amrex::MFIter mfi(state.getPres()); mfi.isValid(); ++mfi, ++local_i)
-        {
-            if (h_tag_arr[local_i] != 0) {
-                local_tagged_boxes.push_back(mfi.validbox());   // the coarse Box for this tagged cell-region
-            }
-        }
-    }
-
-    // gather across all ranks for boxes, updates in place and create box list
-    amrex::AllGatherBoxes(local_tagged_boxes);
-    amrex::BoxList bl(std::move(local_tagged_boxes));
-    amrex::BoxArray tag_ba(std::move(bl));
-
-    return tag_ba;
+    xsoln_ba.grow(nBuff);          // grow each box (now overlapping)
+    xsoln_ba.removeOverlap(true);     // BoxArray method: removes overlap AND simplifies
+    xsoln_ba.maxSize(max_grid_size_req);  // re-chunk to compute box size
 }
 
-void DomainManager::growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size_req)
-{
-    tag_ba.grow(nBuff);          // grow each box (now overlapping)
-    tag_ba.removeOverlap(true);     // BoxArray method: removes overlap AND simplifies
-    tag_ba.maxSize(max_grid_size_req);  // re-chunk to compute box size
-}
-
-void DomainManager::updateGeomBaDm(amrex::BoxArray& tag_ba)
+void DomainManager::updateGeomBaDm(amrex::BoxArray& new_ba)
 {    
     // update members
-    ba = tag_ba;
+    ba = new_ba;
     dm.define(ba);
 
     // geom: same physical RealBox, but FINE resolution domain box
@@ -119,17 +94,19 @@ void DomainManager::initializeSnugDomain()
     initializeVelField(search_state);
     search_state.setBoundary();
 
-    tagSupportRegion(search_state);
+    computeSuppBoxArr(search_state);
 
     psi.define(vort.boxArray(), vort.DistributionMap(), vort.nComp(), vort.nGrow());
     psi.setVal(0.0);
 
-    amrex::BoxArray tag_ba = gatherTaggedBoxArr(search_state);
+    amrex::BoxArray xsoln_ba = supp_ba;
     
-    tag_ba.refine(search_to_fine_ref_ratio);   // now at fine resolution
+    // refine to desired resolution
+    xsoln_ba.refine(search_to_fine_ref_ratio);
 
-    growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
-    updateGeomBaDm(tag_ba);
+    // pad with buffer and update
+    growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size);
+    updateGeomBaDm(xsoln_ba);
 
     // initialize error multifab to zero
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
@@ -146,11 +123,11 @@ int DomainManager::computeRegridInterval(const FlowField& state) const
     return regrid_int;
 }
 
-void DomainManager::tagSupportRegion(const FlowField& state) 
+void DomainManager::computeSuppBoxArr(const FlowField& state) 
 {
-    BL_PROFILE("<Compute>tagSupportRegion()")
+    BL_PROFILE("<Compute>computeSuppBoxArr()")
     // computes vorticity and divergence of lamb vector tags accordingly and
-    // stores in supp_tag_arr
+    // stores in supp_tag_arr AND NOW AS supp_ba
     // IMPORTANT: ensure that the function always fills the tag_arr based on 
     // the MultiFab on which the source field is computed. Ideally it should
     // be Dxsoln (all MultiFabs in the domain need to adhere to this)
@@ -175,7 +152,7 @@ void DomainManager::tagSupportRegion(const FlowField& state)
     }
 
     // create a tagging criterion for "where the action is"
-    const int num_local_boxes = divN.local_size();
+    const int num_local_boxes = state.getPres().local_size();
 
     // ensure capacity matches without forcing a reallocation if it's already sized
     if (supp_tag_arr.size() != num_local_boxes) 
@@ -209,6 +186,23 @@ void DomainManager::tagSupportRegion(const FlowField& state)
     // update h_tag_arr for the box aggregation and plotting
     h_tag_arr.resize(supp_tag_arr.size());
     amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
+
+    // create a box vector containing only the tagged boxes
+    amrex::Vector<amrex::Box> local_tagged_boxes;
+    {
+        int local_i = 0;
+        for (amrex::MFIter mfi(state.getPres()); mfi.isValid(); ++mfi, ++local_i)
+        {
+            if (h_tag_arr[local_i] != 0) {
+                local_tagged_boxes.push_back(mfi.validbox());   // the coarse Box for this tagged cell-region
+            }
+        }
+    }
+
+    // gather across all ranks for boxes, updates in place and create box list
+    amrex::AllGatherBoxes(local_tagged_boxes);
+    amrex::BoxList bl(std::move(local_tagged_boxes));
+    supp_ba = amrex::BoxArray(std::move(bl));
 }
 
 void DomainManager::updateSnugDomain(const FlowField& state)
@@ -217,13 +211,13 @@ void DomainManager::updateSnugDomain(const FlowField& state)
     // reads current flowfield state (as new search space), tags on search space;
     // uses tag information to update Geom, BoxArr, DistMap; 
 
-    tagSupportRegion(state);
+    computeSuppBoxArr(state);
 
-    amrex::BoxArray tag_ba = gatherTaggedBoxArr(state);
+    amrex::BoxArray xsoln_ba = supp_ba;
 
-    growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
+    growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size);
 
-    updateGeomBaDm(tag_ba);
+    updateGeomBaDm(xsoln_ba);
 }
 
 void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
@@ -363,123 +357,4 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
 
     // move new_state back into state to continue
     state = std::move(new_state);
-}
-
-// computes nodal vorticity for vor2vel(), via the discreteCurlF2E.
-amrex::MultiFab computeNodalVorticity(const FlowField& state)
-{
-    // IMPORTANT: Limited to 2D at present
-    BL_PROFILE("<Compute> computeNodalVorticity()")
-
-    const amrex::Geometry& geom = state.getGeom();
-    const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-
-    const amrex::BoxArray& ba = state.getPres().boxArray();
-    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
-
-    // 2D: omega_z lives at NODES. One nodal MultiFab.
-    amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
-    amrex::MultiFab vort_nd(ba_nd, dm, 1, 1);
-
-    for (amrex::MFIter mfi(vort_nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& out = vort_nd.array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
-            state.getVel(0).const_array(mfi),
-            state.getVel(1).const_array(mfi)
-        };
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
-        });
-    }
-
-    // update ghost cells before returning
-    vort_nd.FillBoundary(geom.periodicity());
-
-    return vort_nd;
-}
-
-// computes cell-centered vorticity for plotting
-amrex::MultiFab computePlotVorticity(const FlowField& state)
-{
-    BL_PROFILE("<Compute> computePlotVorticity()");
-
-    amrex::MultiFab vort_nd = computeNodalVorticity(state);
-
-    const amrex::BoxArray& ba = state.getPres().boxArray();
-    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
-
-    amrex::MultiFab vort_cc(ba, dm, 1, 0);
-    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, 1, 0);
-
-    return vort_cc;
-}
-
-amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
-{
-    BL_PROFILE("computeDivNonLinearTerm()");
-
-    const amrex::Geometry& geom = state.getGeom();
-    const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-
-    const amrex::BoxArray& ba = state.getPres().boxArray();
-    const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
-
-    // create base multifab to work on
-
-    amrex::MultiFab divN(ba, dm, state.getPres().nComp(), 0);
-
-    for (amrex::MFIter mfi(divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& divN_arr = divN.array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{AMREX_D_DECL(state.getVel(0).const_array(mfi), state.getVel(1).const_array(mfi), state.getVel(2).const_array(mfi))};
-        
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            divN_arr(i,j,k) = divMorinishiConvective(i,j,k, invdx, vel);
-        });
-    }
-    
-    return divN;
-}
-
-void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
-{
-    BL_PROFILE("<Compute> computeDivU()");
-
-    // set divU to 0.0 and store fresh data
-    output_divU.setVal(0.0);
-    
-    // extracting physical dx for computations
-    const amrex::Geometry& geom = input_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-
-    // compute divU and store in input_state
-    for(amrex::MFIter mfi(output_divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& divU_arr = output_divU.array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-        {
-            vel_arr[d] = input_state.getVel(d).const_array(mfi);
-        }
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            divU_arr(i,j,k) = discreteDivergenceF2C(i, j, k, invdx, vel_arr);
-        });
-    }
-}
-
-// function to compute and RETURN divU for plotting divU_at_end
-amrex::MultiFab computePlotDivU(const FlowField& state)
-{
-    // thin wrapper for plot convenience
-    MultiFab out(state.getPres().boxArray(), state.getPres().DistributionMap(), 1, 0);
-    computeDivU(out, state);
-
-    return out;
 }

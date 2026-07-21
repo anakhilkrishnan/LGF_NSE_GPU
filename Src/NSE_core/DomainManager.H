@@ -19,13 +19,6 @@
 // free function: this must be defined in NSE_run
 void initializeVelField(FlowField& init_state);
 
-// free functions for convenience/plotting
-amrex::MultiFab computeNodalVorticity(const FlowField& state);
-amrex::MultiFab computePlotVorticity(const FlowField& state);
-amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
-void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
-amrex::MultiFab computePlotDivU(const FlowField& state);
-
 // IMPORTANT: At present, domainManager is wired up for 2D, see vorticity
 // management (in both tagging and vort2vel)
 class DomainManager
@@ -35,6 +28,7 @@ class DomainManager
         // along with the box_tag_arr that only represents Dsupp
         amrex::Geometry geom;
         amrex::BoxArray ba;
+        amrex::BoxArray supp_ba;
         amrex::DistributionMapping dm;
         amrex::Gpu::DeviceVector<int> supp_tag_arr;
 
@@ -50,7 +44,6 @@ class DomainManager
         amrex::Real supp_tag_eps;
 
         // supporting functions
-        amrex::BoxArray gatherTaggedBoxArr(const FlowField& state);
         void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
         void updateGeomBaDm(amrex::BoxArray& tag_ba);
 
@@ -64,6 +57,7 @@ class DomainManager
 
         // getter functions
         amrex::BoxArray getBoxArr() const { return ba; }
+        amrex::BoxArray getSuppBoxArr() const { return supp_ba; }
         amrex::DistributionMapping getDistMap() const { return dm; }
         amrex::Geometry getGeom() const { return geom; }
         const amrex::Gpu::DeviceVector<int>& getSuppTagArr() const { return supp_tag_arr; }
@@ -71,7 +65,7 @@ class DomainManager
         // primary functionality
         DomainManager(const SolverConfig& config);
         const amrex::MultiFab& refreshAndGetDSuppFab();
-        void tagSupportRegion(const FlowField& state);
+        void computeSuppBoxArr(const FlowField& state); // tagging function
         void initializeSnugDomain();
         int computeRegridInterval(const FlowField& state) const;
         void updateSnugDomain(const FlowField& state);

@@ -53,7 +53,7 @@ void extendedMain()
     state_n.setBoundary();
 
     // tag again on the fine grid to prep for the solver
-    dmgr.tagSupportRegion(state_n);
+    dmgr.computeSuppBoxArr(state_n);
     
     // populating pressure based on divergence of Navier-Stokes at initial conditions
     workspace.initializePresField(state_n, dmgr.getSuppTagArr());
@@ -143,7 +143,7 @@ void extendedMain()
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
             io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
-            dmgr.tagSupportRegion(state_n);
+            dmgr.computeSuppBoxArr(state_n);
             io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             auto regrid_stop_time = amrex::second();
             auto regrid_duration = regrid_stop_time - regrid_start_time;

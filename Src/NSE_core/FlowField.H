@@ -12,6 +12,13 @@
 
 using namespace amrex;
 
+// free functions for convenience/plotting
+amrex::MultiFab computeNodalVorticity(const FlowField& state);
+amrex::MultiFab computePlotVorticity(const FlowField& state);
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
+amrex::MultiFab computePlotDivU(const FlowField& state);
+
 class FlowField 
 {
     private:
