@@ -75,7 +75,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+        io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
 
     }
 
@@ -123,7 +123,7 @@ void extendedMain()
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
@@ -138,12 +138,22 @@ void extendedMain()
         // update domain based on results from timestep
         if (step % dmgr.computeRegridInterval(state_n) == 0)
         {
+            auto regrid_start_time = amrex::second();
             dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
-            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
             dmgr.tagSupportRegion(state_n);
-            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.refreshAndGetDSuppFab(), dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            auto regrid_stop_time = amrex::second();
+            auto regrid_duration = regrid_stop_time - regrid_start_time;
+
+            amrex::Print() << "Regridding done at end of step " << step
+                            << " | WallTime: " << (regrid_duration) << "s"
+                            AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
+                                        << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
+                                        << " | w-refresh err: " << dmgr.refresh_err_max_norm[2])
+                            << "\n";
         }
 
         // track duration of timestep

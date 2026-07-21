@@ -59,6 +59,8 @@ class DomainManager
         amrex::MultiFab psi;
         amrex::MultiFab vort;
         amrex::MultiFab divN;
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel_refresh_err; // checks if the velocity refresh is working
+        amrex::Array<amrex::Real, AMREX_SPACEDIM> refresh_err_max_norm;
 
         // getter functions
         amrex::BoxArray getBoxArr() const { return ba; }

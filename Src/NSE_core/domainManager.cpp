@@ -130,6 +130,13 @@ void DomainManager::initializeSnugDomain()
 
     growBoxArr(tag_ba, n_buffer_box * max_grid_size, max_grid_size);
     updateGeomBaDm(tag_ba);
+
+    // initialize error multifab to zero
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
+    {
+        vel_refresh_err[idim].define(ba, dm, 1, 0);
+        vel_refresh_err[idim].setVal(0.0);
+    }
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
@@ -238,6 +245,14 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr);
     psi.FillBoundary(geom.periodicity());
 
+    // initialize error multifab to zero
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
+    {
+        vel_refresh_err[idim].define(state.getVel(idim).boxArray(),
+                                        state.getVel(idim).DistributionMap(), 1, 0);
+        vel_refresh_err[idim].setVal(0.0);
+    }
+
     // update velocities in Dbuff
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
@@ -247,6 +262,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
         const amrex::Box& bx = mfi.tilebox();
         auto const& u_arr = state.getVel(0).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
+        auto const& err_arr = vel_refresh_err[0].array(mfi);
         auto const& m_arr = mask.const_array(mfi); // Cell-centered mask
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -255,7 +271,9 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
             // If EITHER bounding cell is buffer (0.0), overwrite the velocity.
             if (m_arr(i-1, j, k) < 0.5 || m_arr(i, j, k) < 0.5)
             {
-                u_arr(i, j, k) = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
+                amrex::Real u_refresh = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
+                err_arr(i, j, k) = u_refresh - u_arr(i, j, k);
+                u_arr(i, j, k) = u_refresh;
             }
         });
     }
@@ -266,6 +284,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
         const amrex::Box& bx = mfi.tilebox();
         auto const& v_arr = state.getVel(1).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
+        auto const& err_arr = vel_refresh_err[1].array(mfi);
         auto const& m_arr = mask.const_array(mfi);
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
@@ -273,9 +292,16 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
             // A y-face borders cell(i,j-1,k) and cell(i,j,k).
             if (m_arr(i, j-1, k) < 0.5 || m_arr(i, j, k) < 0.5)
             {
-                v_arr(i, j, k) = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
+                amrex::Real v_refresh = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
+                err_arr(i, j, k) = v_refresh - v_arr(i, j, k);
+                v_arr(i, j, k) = v_refresh;
             }
         });
+    }
+
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        refresh_err_max_norm[idim] = vel_refresh_err[idim].norm0(0, 0, false);
     }
 
     // Refresh ghosts since buffer data was manually overwritten
