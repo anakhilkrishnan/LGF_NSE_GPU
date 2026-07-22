@@ -142,15 +142,23 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
 }
 
 void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, 
-                                const MultiFab& divU_star, 
-                                const MultiFab& tagRegion, 
+                                const MultiFab& divU_star,
                                 const MultiFab& divN, 
                                 const MultiFab& psi, 
                                 const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_ref_err,
                                 const amrex::Geometry& geom, 
                                 const amrex::BoxArray& ba, 
+                                const amrex::BoxArray& supp_ba,
                                 const amrex::DistributionMapping& dm)
 {
+    // construct MultiFab for plotting support region
+    amrex::MultiFab tagRegion(ba, dm, 1, 0);
+    for (MFIter mfi(tagRegion); mfi.isValid(); ++mfi)
+    {
+        const Box& bx = mfi.validbox();
+        tagRegion[mfi].setVal<RunOn::Device>(supp_ba.intersects(bx) ? 1.0 : 0.0);
+    }
+
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
 

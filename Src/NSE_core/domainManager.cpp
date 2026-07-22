@@ -62,24 +62,6 @@ void DomainManager::updateGeomBaDm(amrex::BoxArray& new_ba)
     geom.define(fine_domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 }
 
-const amrex::MultiFab& DomainManager::refreshAndGetDSuppFab()
-{
-    // redefine DSupp to match current grid
-    DSupp.define(ba, dm, 1, 1);
-    DSupp.setVal(0.0);
-
-    // export tagging data into plotting multifab
-    for (MFIter mfi(DSupp); mfi.isValid(); ++mfi) 
-    {
-        const amrex::Real v = (h_tag_arr[mfi.LocalIndex()] == 1) ? 1.0 : 0.0;
-        DSupp[mfi].setVal<RunOn::Device>(v);
-    }
-
-    DSupp.FillBoundary(geom.periodicity());
-
-    return DSupp;   // by REFERENCE
-}
-
 void DomainManager::initializeSnugDomain()
 {
     BL_PROFILE("<Compute>initializeSnugDomain()")
@@ -231,12 +213,12 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
     psi.setVal(0.0);
 
-    // generate the cell-centered mask to skip interior math
-    const amrex::MultiFab& mask = refreshAndGetDSuppFab();
-
+    // use converter to generate DeviceVector
+    amrex::Gpu::DeviceVector<int> supp_tag_arr_built_from_supp_ba = convertSuppBoxArrToDeviceVector(state, supp_ba);
+    
     // compute streamfunction ONLY on buffer nodes
     vort_nd.mult(-1.0); // source term is -omega_z
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr);
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr_built_from_supp_ba);
     psi.FillBoundary(geom.periodicity());
 
     // initialize error multifab to zero
@@ -254,21 +236,18 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     for (amrex::MFIter mfi(state.getVel(0), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
+        // early exit if box is fully within support
+        if (supp_ba.contains(amrex::enclosedCells(bx))) { continue; }
+
         auto const& u_arr = state.getVel(0).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
         auto const& err_arr = vel_refresh_err[0].array(mfi);
-        auto const& m_arr = mask.const_array(mfi); // Cell-centered mask
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            // An x-face borders cell(i-1,j,k) and cell(i,j,k). 
-            // If EITHER bounding cell is buffer (0.0), overwrite the velocity.
-            if (m_arr(i-1, j, k) < 0.5 || m_arr(i, j, k) < 0.5)
-            {
-                amrex::Real u_refresh = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
+            amrex::Real u_refresh = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
                 err_arr(i, j, k) = u_refresh - u_arr(i, j, k);
                 u_arr(i, j, k) = u_refresh;
-            }
         });
     }
 
@@ -276,20 +255,18 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     for (amrex::MFIter mfi(state.getVel(1), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
+        // early exit if box is fully within support
+        if (supp_ba.contains(amrex::enclosedCells(bx))) { continue; }
+
         auto const& v_arr = state.getVel(1).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
         auto const& err_arr = vel_refresh_err[1].array(mfi);
-        auto const& m_arr = mask.const_array(mfi);
 
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            // A y-face borders cell(i,j-1,k) and cell(i,j,k).
-            if (m_arr(i, j-1, k) < 0.5 || m_arr(i, j, k) < 0.5)
-            {
-                amrex::Real v_refresh = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
-                err_arr(i, j, k) = v_refresh - v_arr(i, j, k);
-                v_arr(i, j, k) = v_refresh;
-            }
+            amrex::Real v_refresh = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
+            err_arr(i, j, k) = v_refresh - v_arr(i, j, k);
+            v_arr(i, j, k) = v_refresh;
         });
     }
 
@@ -318,38 +295,16 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
     new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
     new_state.setBoundary();
 
-    // mask transplant to new grid
-    amrex::MultiFab new_DSupp(ba, dm, 1, 1);
-    new_DSupp.setVal(0.0); 
-    new_DSupp.ParallelCopy(DSupp, 0, 0, 1, 0, 0);
-    DSupp = std::move(new_DSupp);
-    DSupp.FillBoundary(geom.periodicity());
-
-    // update supp_tag_arr and htag)arr
-    const int num_local_boxes = DSupp.local_size();
-    if (supp_tag_arr.size() != num_local_boxes) 
+    // local test to see if grow/rechunk actually affects the solver due to the choice between intersect tag and contain tag
+    int n_contain = 0, n_intersect = 0;
+    for (MFIter mfi(new_state.getPres()); mfi.isValid(); ++mfi)
     {
-        supp_tag_arr.resize(num_local_boxes);
+        const Box& bx = mfi.validbox();
+        if (supp_ba.contains(bx))   n_contain++;
+        if (supp_ba.intersects(bx)) n_intersect++;
     }
-
-    int* d_flags_ptr = supp_tag_arr.dataPtr();
-    amrex::ParallelFor(num_local_boxes, [=] AMREX_GPU_DEVICE (int i)
-    {
-        d_flags_ptr[i] = 0;
-    });
-
-    auto const& dsupp_arrs = DSupp.const_arrays();
-    amrex::ParallelFor(DSupp, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
-    {
-        if (d_flags_ptr[box_no] != 0) return;
-        if (dsupp_arrs[box_no](i,j,k) == 1.0)
-        {
-            amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
-        }
-    });
-
-    h_tag_arr.resize(supp_tag_arr.size());
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, supp_tag_arr.begin(), supp_tag_arr.end(), h_tag_arr.begin());
+    amrex::Print() << "contain-tagged: " << n_contain
+                << " | intersect-tagged: " << n_intersect << "\n";
 
     // use supp_tag_arr (now updated with Dsupp found when creating new geom, ba, dm)
     // to avoid vel refresh on Dsupp. Only Dbuff needs the update
@@ -357,4 +312,22 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
 
     // move new_state back into state to continue
     state = std::move(new_state);
+}
+
+amrex::Gpu::DeviceVector<int> convertSuppBoxArrToDeviceVector(const FlowField& ref_state, const amrex::BoxArray& supp_ba)
+{
+    const int num_local_boxes = ref_state.getPres().local_size();
+    amrex::Vector<int> h_tag_arr(num_local_boxes);
+
+    int local_i = 0;
+    for (amrex::MFIter mfi(ref_state.getPres()); mfi.isValid(); ++mfi, ++local_i)
+    {
+        const amrex::Box& bx = mfi.validbox();          // cell-centered, matches supp_ba
+        h_tag_arr[local_i] = supp_ba.intersects(bx) ? 1 : 0;
+    }
+
+    amrex::Gpu::DeviceVector<int> supp_tag_arr(num_local_boxes);
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice,
+                     h_tag_arr.begin(), h_tag_arr.end(), supp_tag_arr.begin());
+    return supp_tag_arr;
 }

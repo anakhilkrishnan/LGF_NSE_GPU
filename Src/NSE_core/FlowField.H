@@ -2,6 +2,7 @@
 #define FLOWFIELD_H_
 
 #include <AMReX_MultiFab.H>
+#include <AMReX_MultiFabUtil.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
@@ -9,15 +10,9 @@
 #include <AMReX_Array.H>
 
 #include <SolverConfig.H>
+#include <SpatialDiscretization.H>
 
 using namespace amrex;
-
-// free functions for convenience/plotting
-amrex::MultiFab computeNodalVorticity(const FlowField& state);
-amrex::MultiFab computePlotVorticity(const FlowField& state);
-amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
-void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
-amrex::MultiFab computePlotDivU(const FlowField& state);
 
 class FlowField 
 {
@@ -55,5 +50,13 @@ class FlowField
         // regridding functions
         void redefine(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
+
+// free functions for convenience/plotting
+amrex::MultiFab computeNodalVorticity(const FlowField& state);
+amrex::MultiFab computePlotVorticity(const FlowField& state);
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
+void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
+amrex::MultiFab computePlotDivU(const FlowField& state);
+
 
 #endif
