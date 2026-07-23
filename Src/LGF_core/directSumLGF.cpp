@@ -12,7 +12,7 @@ DirectSumLGF::DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in)
 // Note: This function isn't given any openmp support because half of it requires serial looping and the other half isn't
 // a bottleneck at all. If it does turn out to be, one can add over the MFIter calling ParallelFor() the desired
 // pragma openmp for cpu builds
-void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::BoxArray& tag_ba)
 {
     BL_PROFILE("<Communicate> consolidateMultiFab()");
 
@@ -29,10 +29,6 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
         owner = amrex::OwnerMask(phi, geom.periodicity());   // already a unique_ptr, just move-assign
     }
 
-    // copy the box tagging array to host to setup h_local_meta to handle device side copy
-    h_source_box_tag_arr.resize(num_local_boxes);
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, source_box_tag_arr.begin(), source_box_tag_arr.end(), h_source_box_tag_arr.begin());
-
     int my_data_size = 0;
     int my_meta_size = 0; // Index counter for active boxes
 
@@ -42,14 +38,12 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
 
     for (amrex::MFIter mfi(phi); mfi.isValid(); ++mfi)
     {
-        const int local_idx = mfi.LocalIndex();
-        if (h_source_box_tag_arr[local_idx] == 0) 
+        const amrex::Box& bx = mfi.validbox();
+        if (!tag_ba.intersects(amrex::enclosedCells(bx))) // if box contains a cell above threshold, box gets packed
         {
             continue;
         }
-
-        const amrex::Box& bx = mfi.validbox();
-        
+        const int local_idx = mfi.LocalIndex();
         // track the starting index for this box's floating point data
         h_box_data_offsets[local_idx] = my_data_size; 
 
@@ -75,13 +69,13 @@ void DirectSumLGF::consolidateMultiFab(const amrex::MultiFab& phi, const amrex::
     // native device packing kernel
     for (amrex::MFIter mfi(phi); mfi.isValid(); ++mfi)
     {
-        const int local_idx = mfi.LocalIndex();
-        if (h_source_box_tag_arr[local_idx] == 0) 
+        const amrex::Box& bx = mfi.validbox();
+        if (!tag_ba.intersects(amrex::enclosedCells(bx)))
         {
             continue;
         }
 
-        const amrex::Box& bx = mfi.validbox();
+        const int local_idx = mfi.LocalIndex();
         auto const& phi_arr = phi.const_array(mfi);
         const int offset = h_box_data_offsets[local_idx];
         
@@ -222,7 +216,7 @@ void DirectSumLGF::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxA
     geom = new_geom;
 }
 
-void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba)
 {
     // adding profiling blocks for Tiny/Base profilers
     BL_PROFILE("<Compute> solvePoisson()");
@@ -232,7 +226,7 @@ void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> prob_lo = geom.ProbLoArray();
 
     // Read data from the source MultiFab and make it available to all processes
-    consolidateMultiFab(source, source_box_tag_arr);
+    consolidateMultiFab(source, tag_ba);
 
     // export the consolidated data as pointers to the target MFIter
     int num_blocks = consolMetadata.size();
@@ -316,7 +310,7 @@ void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
     }
 }
 
-void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr)
+void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba)
 {
     BL_PROFILE("<Compute> solveNodalPoisson()");
 
@@ -327,7 +321,7 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> dx = geom.CellSizeArray();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> prob_lo = geom.ProbLoArray();
 
-    consolidateMultiFab(source, source_box_tag_arr);
+    consolidateMultiFab(source, tag_ba);
 
     int num_blocks = consolMetadata.size();
     const amrex::Real* data_ptr = consolData.dataPtr();

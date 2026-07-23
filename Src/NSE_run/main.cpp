@@ -56,7 +56,7 @@ void extendedMain()
     dmgr.computeSuppBoxArr(state_n);
     
     // populating pressure based on divergence of Navier-Stokes at initial conditions
-    workspace.initializePresField(state_n, dmgr.getSuppTagArr());
+    workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
 
     // populating KE comp arrays
     workspace.computeKEFromState(state_n);
@@ -113,7 +113,7 @@ void extendedMain()
 
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, dt_master, dmgr.getSuppTagArr());
+        workspace.advanceTimeStep(state_n, dt_master, dmgr.getSuppBoxArr());
 
         // update counters
         time += dt_master;

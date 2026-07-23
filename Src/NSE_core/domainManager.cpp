@@ -36,9 +36,6 @@ DomainManager::DomainManager(const SolverConfig& config)
     amrex::RealBox real_box(dom_lo, dom_hi);
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
-
-    DSupp.define(ba, dm, 1, 0);
-    DSupp.setVal(0.0);
 }
 
 void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_grid_size_req)
@@ -211,14 +208,9 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
 
     // allocate target multifab
     psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
-    psi.setVal(0.0);
-
-    // use converter to generate DeviceVector
-    amrex::Gpu::DeviceVector<int> supp_tag_arr_built_from_supp_ba = convertSuppBoxArrToDeviceVector(state, supp_ba);
-    
-    // compute streamfunction ONLY on buffer nodes
+    psi.setVal(0.0);// compute streamfunction ONLY on buffer nodes
     vort_nd.mult(-1.0); // source term is -omega_z
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_tag_arr_built_from_supp_ba);
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_ba);
     psi.FillBoundary(geom.periodicity());
 
     // initialize error multifab to zero
@@ -312,22 +304,4 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
 
     // move new_state back into state to continue
     state = std::move(new_state);
-}
-
-amrex::Gpu::DeviceVector<int> convertSuppBoxArrToDeviceVector(const FlowField& ref_state, const amrex::BoxArray& supp_ba)
-{
-    const int num_local_boxes = ref_state.getPres().local_size();
-    amrex::Vector<int> h_tag_arr(num_local_boxes);
-
-    int local_i = 0;
-    for (amrex::MFIter mfi(ref_state.getPres()); mfi.isValid(); ++mfi, ++local_i)
-    {
-        const amrex::Box& bx = mfi.validbox();          // cell-centered, matches supp_ba
-        h_tag_arr[local_i] = supp_ba.intersects(bx) ? 1 : 0;
-    }
-
-    amrex::Gpu::DeviceVector<int> supp_tag_arr(num_local_boxes);
-    amrex::Gpu::copy(amrex::Gpu::hostToDevice,
-                     h_tag_arr.begin(), h_tag_arr.end(), supp_tag_arr.begin());
-    return supp_tag_arr;
 }

@@ -139,15 +139,13 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
     return max_div;
 }
 
-void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex::Gpu::DeviceVector<int>& box_tag_arr_in)
+void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba)
 {
     BL_PROFILE("<Setup> InitializePresField()");
     
     // set value to 0.0 and store fresh
     divU.setVal(0.0);
     init_state.getPres().setVal(0.0);
-
-    box_tag_arr = box_tag_arr_in;
 
     computeMomentumFluxes(init_state);
 
@@ -173,7 +171,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
         });
     }
 
-    lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), box_tag_arr);
+    lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), init_supp_ba);
     init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
 
     // write out divU_max_norm
@@ -406,7 +404,7 @@ void ProjectionWorkspace::computePressure()
     computeDivU(divU, stage);
 
     // performing addition of box values 
-    lgf_poisson_solver.solvePoisson(divU, pres_corr, box_tag_arr);
+    lgf_poisson_solver.solvePoisson(divU, pres_corr, tag_ba);
     pres_corr.FillBoundary(stage.getGeom().periodicity());
     
     // write out divU_max_norm
@@ -475,7 +473,7 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
     divU_at_end_max_norm = computeDivUMaxNorm(stage);
 }
 
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::Gpu::DeviceVector<int>& supp_tag_arr)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba)
 {
 
     // perform low-storage RK method for specified order, which can be reduced
@@ -484,9 +482,9 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
 
     BL_PROFILE("<Compute> advanceTimeStep()");
 
-    // set member value using incoming dt and supp_tag_arr
+    // set member value using incoming dt and supp_ba
     dt = dt_in;
-    box_tag_arr = supp_tag_arr;
+    tag_ba = supp_ba;
 
     stage = state_n;
     amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_order);

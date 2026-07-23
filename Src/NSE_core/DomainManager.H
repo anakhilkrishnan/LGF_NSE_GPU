@@ -19,9 +19,6 @@
 // free function: this must be defined in NSE_run
 void initializeVelField(FlowField& init_state);
 
-// free function: convert a boxArray into localized DeviceVector that can be used for tagging
-amrex::Gpu::DeviceVector<int> convertSuppBoxArrToDeviceVector(const FlowField& ref_state, const amrex::BoxArray& supp_ba);
-
 // IMPORTANT: At present, domainManager is wired up for 2D, see vorticity
 // management (in both tagging and vort2vel)
 class DomainManager
@@ -33,10 +30,9 @@ class DomainManager
         amrex::BoxArray ba;
         amrex::BoxArray supp_ba;
         amrex::DistributionMapping dm;
-        amrex::Gpu::DeviceVector<int> supp_tag_arr;
-
+        
         // scratch variables
-        amrex::MultiFab DSupp;
+        amrex::Gpu::DeviceVector<int> supp_tag_arr;
         amrex::Vector<int>h_tag_arr;
 
         // inputs needed from Solver config
@@ -63,7 +59,6 @@ class DomainManager
         amrex::BoxArray getSuppBoxArr() const { return supp_ba; }
         amrex::DistributionMapping getDistMap() const { return dm; }
         amrex::Geometry getGeom() const { return geom; }
-        const amrex::Gpu::DeviceVector<int>& getSuppTagArr() const { return supp_tag_arr; }
 
         // primary functionality
         DomainManager(const SolverConfig& config);

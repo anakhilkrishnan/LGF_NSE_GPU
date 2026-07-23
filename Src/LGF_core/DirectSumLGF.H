@@ -42,20 +42,17 @@ class DirectSumLGF
     amrex::Gpu::DeviceVector<int>             d_meta_displs;
     
     public:
-    // keeping this public so that multifab creating loop can work
-    amrex::Vector<int>         h_source_box_tag_arr;
-    
     // data from what was once ConsolidatedData
     amrex::Gpu::DeviceVector<amrex::Real> consolData;
     amrex::Gpu::DeviceVector<FabMetaData> consolMetadata;
 
     // supporting functions
-    void consolidateMultiFab(const amrex::MultiFab& phi, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
+    void consolidateMultiFab(const amrex::MultiFab& phi, const amrex::BoxArray& tag_ba);
     void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 
     DirectSumLGF(const amrex::Geometry& geom_in, const int n_look_in);
-    void solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
-    void solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::Gpu::DeviceVector<int>& source_box_tag_arr);
+    void solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba);
+    void solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba);
 };
 
 #endif

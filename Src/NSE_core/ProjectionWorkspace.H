@@ -33,16 +33,13 @@ class ProjectionWorkspace
         FlowField stage;
 
         // scratch space type data
-        amrex::Gpu::DeviceVector<int> box_tag_arr;
+        amrex::BoxArray tag_ba; // BoxArray that represents tagged support within ba
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
         amrex::MultiFab pres_corr;
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
-
-        
-        
 
     public: 
 
@@ -62,7 +59,7 @@ class ProjectionWorkspace
         ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config);
 
         // functions for initialization
-        void initializePresField(FlowField& init_state, const amrex::Gpu::DeviceVector<int>& box_tag_arr_in);
+        void initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba);
 
         // functions for KE computations
         void computeKECompFluxes(const FlowField& input_state);
@@ -79,7 +76,7 @@ class ProjectionWorkspace
 
         amrex::Real computeDt(const FlowField& state_n) const;
         amrex::Real computeDivUMaxNorm(const FlowField& input_state) const;
-        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::Gpu::DeviceVector<int>& supp_tag_arr);
+        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& tag_ba);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 
