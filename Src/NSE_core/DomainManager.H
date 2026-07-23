@@ -62,7 +62,7 @@ class DomainManager
 
         // primary functionality
         DomainManager(const SolverConfig& config);
-        void computeSuppBoxArr(const FlowField& state); // tagging function
+        void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain();
         int computeRegridInterval(const FlowField& state) const;
         void updateSnugDomain(const FlowField& state);

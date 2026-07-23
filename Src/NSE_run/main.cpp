@@ -52,8 +52,8 @@ void extendedMain()
     // fill ghost cells and apply physical BCs
     state_n.setBoundary();
 
-    // tag again on the fine grid to prep for the solver
-    dmgr.computeSuppBoxArr(state_n);
+    // tag again on the fine grid to prep for the solver, don't shed outer layer here
+    dmgr.computeSuppBoxArr(state_n, false);
     
     // populating pressure based on divergence of Navier-Stokes at initial conditions
     workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
@@ -128,7 +128,7 @@ void extendedMain()
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval
-        if ((step %io_cfg.chk_int == 0 || (step - 5) %io_cfg.chk_int == 0) &&io_cfg.write_chk)
+        if ((step %io_cfg.chk_int == 0 || (step - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
         {
             BL_PROFILE("<IO> Interval Checkpoint()");
             io.writeMyChkFile(writeMainChk, step, time, state_n);
@@ -139,7 +139,7 @@ void extendedMain()
         if (step % dmgr.computeRegridInterval(state_n) == 0)
         {
             auto regrid_start_time = amrex::second();
-            // dmgr.updateSnugDomain(state_n);
+            dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
             io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());

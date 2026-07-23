@@ -38,7 +38,7 @@ struct IOConfig
         pp.query("plot_dir", plot_dir);
         pp.query("plot_prefix", plot_prefix);
 
-        pp.query("write_checkpoint", write_chk);
+        pp.query("write_chk", write_chk);
         pp.query("start_from_chk", start_from_chk);
         pp.query("chk_int", chk_int);
         pp.query("chk_dir", chk_dir);

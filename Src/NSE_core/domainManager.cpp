@@ -2,8 +2,8 @@
 
 DomainManager::DomainManager(const SolverConfig& config)
 {   
-    // at constructor call, a coarse mesh with 'search' params is created
-    // this facilictates the direct natural follow up of initializeSnugDomain();
+    // at constructor call, a coarse mesh with 'search' params is created this
+    // facilictates the direct natural follow up of initializeSnugDomain();
     // alternatively, by excluding the call to any of the functions, the solver
     // can be run on the prespecified search grid.
 
@@ -22,7 +22,11 @@ DomainManager::DomainManager(const SolverConfig& config)
     search_to_fine_ref_ratio = config.search_to_fine_ref_ratio;
     supp_tag_eps = config.supp_tag_eps;
 
-
+    // rules on what can be initialized and what can't be
+    AMREX_ALWAYS_ASSERT(n_ghost >= 2);
+    AMREX_ALWAYS_ASSERT(regrid_int >= 1);
+    AMREX_ALWAYS_ASSERT(n_shed_box >= 1 && n_shed_box < n_buffer_box);
+        
     // creating domain data objects
     amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
     amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell_search-1, config.n_cell_search-1, config.n_cell_search-1));
@@ -73,7 +77,7 @@ void DomainManager::initializeSnugDomain()
     initializeVelField(search_state);
     search_state.setBoundary();
 
-    computeSuppBoxArr(search_state);
+    computeSuppBoxArr(search_state, false); // can't shed outer layer as it has never been tagged before
 
     psi.define(vort.boxArray(), vort.DistributionMap(), vort.nComp(), vort.nGrow());
     psi.setVal(0.0);
@@ -97,24 +101,48 @@ void DomainManager::initializeSnugDomain()
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
 {
-    // TODO: q_max = floor(beta * Nb * nb / consumption_rate(state)), asserted >= 1
-    AMREX_ALWAYS_ASSERT(regrid_int >= 1);
+    // TODO: q_max = floor(beta * Nb * nb / consumption_rate(state)), asserted
+    // >= 1
     return regrid_int;
 }
 
-void DomainManager::computeSuppBoxArr(const FlowField& state) 
+void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLayer) 
 {
     BL_PROFILE("<Compute>computeSuppBoxArr()")
     // computes vorticity and divergence of lamb vector tags accordingly and
-    // stores in supp_tag_arr AND NOW AS supp_ba
-    // IMPORTANT: ensure that the function always fills the tag_arr based on 
-    // the MultiFab on which the source field is computed. Ideally it should
-    // be Dxsoln (all MultiFabs in the domain need to adhere to this)
+    // stores in supp_ba
+    // IMPORTANT: shedOuterLayer is implicit in its nature. If true, it cannot be
+    // run if the old and new supp_ba are on different refinement levels or if 
+    // there is no old supp_ba, like in the first initialization call
 
-    // this call is feasible because we ensure that at any given time, vort, divN and state.getPres()
-    // all live on the same ba and dm
+    // this call is feasible because we ensure that at any given time, vort,
+    // divN and state.getPres() all live on the same ba and dm
     vort = computePlotVorticity(state);
     divN = computeDivNonLinearTerm(state);
+
+    // add an if(not_initialization) branch to zero all of the outermost buffer layer's cells by a 
+    // specified number of boxes
+    if (shedOuterLayer)
+    {
+        amrex::BoxArray xsoln_ba_without_outer = supp_ba;
+        growBoxArr(xsoln_ba_without_outer, (n_buffer_box - n_shed_box) * max_grid_size, max_grid_size);
+
+        // loop over vort and divN, zeroing all cells that are outside this layer
+        for (amrex::MFIter mfi(divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        {
+            const amrex::Box& bx = mfi.tilebox();
+            if(xsoln_ba_without_outer.contains(mfi.validbox())) { continue; }
+
+            auto const& divN_arr = divN.array(mfi);
+            auto const& vort_plt_arr = vort.array(mfi);
+            
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                divN_arr(i, j, k) = 0.0;
+                vort_plt_arr(i, j, k) = 0.0;
+            });
+        }
+    }
 
     // normalize vorticity by its global max (DECIDE: 3D magnitude, not comp 0)
     amrex::Real vort_max_norm = vort.norm0(0, 0, false);
@@ -133,7 +161,8 @@ void DomainManager::computeSuppBoxArr(const FlowField& state)
     // create a tagging criterion for "where the action is"
     const int num_local_boxes = state.getPres().local_size();
 
-    // ensure capacity matches without forcing a reallocation if it's already sized
+    // ensure capacity matches without forcing a reallocation if it's already
+    // sized
     if (supp_tag_arr.size() != num_local_boxes) 
     {
         supp_tag_arr.resize(num_local_boxes);
@@ -182,13 +211,33 @@ void DomainManager::computeSuppBoxArr(const FlowField& state)
     amrex::AllGatherBoxes(local_tagged_boxes);
     amrex::BoxList bl(std::move(local_tagged_boxes));
     supp_ba = amrex::BoxArray(std::move(bl));
+
+    // check for multi-rank solver to ensure supp_ba that is generated is consistent
+#ifdef AMREX_USE_MPI
+    {
+        // build a cheap order-sensitive hash of the box list
+        long h = supp_ba.size();
+        for (int i = 0; i < supp_ba.size(); ++i) {
+            const amrex::Box& b = supp_ba[i];
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                h = h * 1000003L + b.smallEnd(d);
+                h = h * 1000003L + b.bigEnd(d);
+            }
+        }
+
+        long hmin = h, hmax = h;
+        amrex::ParallelDescriptor::ReduceLongMin(hmin);
+        amrex::ParallelDescriptor::ReduceLongMax(hmax);
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(hmin == hmax, "supp_ba differs across ranks");
+    }
+#endif
 }
 
 void DomainManager::updateSnugDomain(const FlowField& state)
 {
     BL_PROFILE("<Compute>updateSnugDomain()")
-    // reads current flowfield state (as new search space), tags on search space;
-    // uses tag information to update Geom, BoxArr, DistMap; 
+    // reads current flowfield state (as new search space), tags on search
+    // space; uses tag information to update Geom, BoxArr, DistMap; 
 
     computeSuppBoxArr(state);
 
@@ -229,7 +278,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(bx))) { continue; }
+        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& u_arr = state.getVel(0).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
@@ -248,7 +297,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(bx))) { continue; }
+        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& v_arr = state.getVel(1).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
@@ -273,7 +322,8 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
 
 void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
 {
-    // recognizes geom, ba, dm members have been updated, do not match current input state
+    // recognizes geom, ba, dm members have been updated, do not match current
+    // input state
     
     // create new state with new geom, ba, dm
     FlowField new_state(geom, ba, dm, n_comp, n_ghost);
@@ -287,7 +337,8 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
     new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
     new_state.setBoundary();
 
-    // local test to see if grow/rechunk actually affects the solver due to the choice between intersect tag and contain tag
+    // local test to see if grow/rechunk actually affects the solver due to the
+    // choice between intersect tag and contain tag
     int n_contain = 0, n_intersect = 0;
     for (MFIter mfi(new_state.getPres()); mfi.isValid(); ++mfi)
     {
@@ -298,8 +349,8 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
     amrex::Print() << "contain-tagged: " << n_contain
                 << " | intersect-tagged: " << n_intersect << "\n";
 
-    // use supp_tag_arr (now updated with Dsupp found when creating new geom, ba, dm)
-    // to avoid vel refresh on Dsupp. Only Dbuff needs the update
+    // use supp_tag_arr (now updated with Dsupp found when creating new geom,
+    // ba, dm) to avoid vel refresh on Dsupp. Only Dbuff needs the update
     vor2vel(new_state, lgf_nodal_poisson_solver);
 
     // move new_state back into state to continue
