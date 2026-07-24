@@ -530,7 +530,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
 void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
 {
     // update the Poisson solver
-    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);
+    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);    
 
     // update stage without worrying about data and so on
     stage.redefine(new_geom, new_ba, new_dm);
@@ -544,9 +544,16 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
         rhs_vel_corr[idim].define(new_ba_face, new_dm, rhs_vel_corr[idim].nComp(), rhs_vel_corr[idim].nGrow());
         rhs_kecomp[idim].define(new_ba_face, new_dm, rhs_kecomp[idim].nComp(), rhs_kecomp[idim].nGrow());
         kecomp_dir[idim].define(new_ba_face, new_dm, kecomp_dir[idim].nComp(), kecomp_dir[idim].nGrow());
+
+        rhs_vel[idim].setVal(0.0);
+        rhs_vel_corr[idim].setVal(0.0);
+        rhs_kecomp[idim].setVal(0.0);
+        kecomp_dir[idim].setVal(0.0);
     }
 
     // reallocate cell-centered arrays
     pres_corr.define(new_ba, new_dm, pres_corr.nComp(), pres_corr.nGrow());
+    pres_corr.setVal(0.0);
     divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
+    divU.setVal(0.0);
 }

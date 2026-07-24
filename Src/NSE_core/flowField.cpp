@@ -1,15 +1,5 @@
 #include <FlowField.H>
 
-struct DummyFillExtDir
-{
-    AMREX_GPU_DEVICE
-    void operator() (const amrex::IntVect& /*iv*/, amrex::Array4<amrex::Real> const& /*dest*/,
-                     const int /*dcomp*/, const int /*numcomp*/,
-                     amrex::GeometryData const& /*geom*/, const amrex::Real /*time*/,
-                     const amrex::BCRec* /*bcr*/, const int /*bcomp*/,
-                     const int /*orig_comp*/) const {}
-};
-
 FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int n_comp, const int n_ghost)
 {
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -74,27 +64,12 @@ FlowField& FlowField::operator=(const FlowField& other)
 
 void FlowField::setBoundary()
 {
-    // initializing BCRec object 1 dimension at a time
-    amrex::Vector<amrex::BCRec> bc(1);
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
-    {
-        bc[0].setLo(idim, amrex::BCType::foextrap);
-        bc[0].setHi(idim, amrex::BCType::foextrap);
-    }
-    
-    amrex::GpuBndryFuncFab<DummyFillExtDir> bndry_func(DummyFillExtDir{});
-    amrex::PhysBCFunct<decltype(bndry_func)> physbc(globalgeom, bc, bndry_func);
-
     // update velocity fields
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         // update ghost cells
         vel[idim].FillBoundary(globalgeom.periodicity());
         kecomp[idim].FillBoundary(globalgeom.periodicity());
-        
-        // update physical domain BCs
-        physbc(vel[idim], 0, 1, vel[idim].nGrowVect(), 0.0, 0);
-        physbc(kecomp[idim], 0, 1, kecomp[idim].nGrowVect(), 0.0, 0);
     }
 
     // update pressure fields
@@ -111,8 +86,12 @@ void FlowField::redefine(const amrex::Geometry& new_geom, const amrex::BoxArray&
         amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
         vel[idim].define(new_ba_face, new_dm, vel[idim].nComp(), vel[idim].nGrow());
         kecomp[idim].define(new_ba_face, new_dm, kecomp[idim].nComp(), kecomp[idim].nGrow());
+
+        vel[idim].setVal(0.0);
+        kecomp[idim].setVal(0.0);
     }
     pres.define(new_ba, new_dm, pres.nComp(), pres.nGrow());
+    pres.setVal(0.0);
 }
 
 // computes nodal vorticity for vor2vel(), via the discreteCurlF2E.

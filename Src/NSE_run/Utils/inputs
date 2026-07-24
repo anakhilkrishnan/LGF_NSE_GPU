@@ -14,7 +14,7 @@ domain_lo = -2.0 -2.0 -2.0
 domain_hi = 2.0 2.0 2.0
 
 rk_order = 2
-max_steps = 1
+max_steps = 2
 t_start = 0.0
 t_stop = 10.0
 cfl = 0.5
