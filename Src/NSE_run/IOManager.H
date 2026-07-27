@@ -66,6 +66,9 @@ class IOManager
                                 const amrex::BoxArray& ba, 
                                 const amrex::BoxArray& supp_ba,
                                 const amrex::DistributionMapping& dm);
+        void writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real time,
+                                        const FlowField& state,
+                                        const DomainManager& dom_mgr);
         void writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         void initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         

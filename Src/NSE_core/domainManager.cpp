@@ -349,6 +349,9 @@ void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSum
     amrex::Print() << "contain-tagged: " << n_contain
                 << " | intersect-tagged: " << n_intersect << "\n";
 
+    // update the Poisson solver
+    lgf_nodal_poisson_solver.regridOnto(geom, ba, dm);    
+
     // use supp_tag_arr (now updated with Dsupp found when creating new geom,
     // ba, dm) to avoid vel refresh on Dsupp. Only Dbuff needs the update
     vor2vel(new_state, lgf_nodal_poisson_solver);

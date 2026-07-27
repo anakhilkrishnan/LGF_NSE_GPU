@@ -94,7 +94,8 @@ void extendedMain()
     auto init_duration = init_stop_time - overall_start_time;
     amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
                     << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
-                    << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
+                    << " | divU_max: " << workspace.divU_at_end_max_norm
+                    << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
 
     // timestepping logic begins
     while(time < sol_cfg.t_stop && step < sol_cfg.max_steps)
@@ -141,10 +142,10 @@ void extendedMain()
             auto regrid_start_time = amrex::second();
             dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
-            io.writeMyPlotFile((-1 * step), time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(), dmgr.getDistMap());
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            io.writeMyDiagnosticPlotFile(1, step, time, state_n, dmgr);
             dmgr.computeSuppBoxArr(state_n);
-            io.writeMyPlotFile((-2 * step), time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(), dmgr.getDistMap());
+            io.writeMyDiagnosticPlotFile(2, step, time, state_n, dmgr);
             auto regrid_stop_time = amrex::second();
             auto regrid_duration = regrid_stop_time - regrid_start_time;
 
@@ -163,7 +164,8 @@ void extendedMain()
         // print to terminal each timestep
         amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
                         << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
-                        << " | divU_max: " << workspace.divU_at_end_max_norm << "\n";
+                        << " | divU_max: " << workspace.divU_at_end_max_norm
+                        << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
     }
 
     // perform KEP check and write data for the last time

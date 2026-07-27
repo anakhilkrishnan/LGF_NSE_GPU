@@ -48,6 +48,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
 
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
+    divU_at_end_max_norm_support = 0.0;
 
     dt = 0.0;
 }
@@ -95,13 +96,12 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
     return amrex::min(dt_adv, dt_diff);
 }
 
-amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state) const
+amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArray* restrict_ba) const
 {
     BL_PROFILE("<Compute> computeDivUMaxNorm()");
 
     // function to reduce state directly into divUMaxNorm
-    // called at appropriate locations to differentiate divU_star
-    // and divU_at_end
+    // optionally takes ba input and restricts norm computation to those boxes
 
     amrex::ReduceOps<amrex::ReduceOpMax> reduce_op;
     amrex::ReduceData<amrex::Real> reduce_data(reduce_op);
@@ -116,13 +116,13 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
     for (amrex::MFIter mfi(input_state.getPres()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.validbox();
+        if (restrict_ba != nullptr && !restrict_ba->contains(bx)) { continue; }
 
         AMREX_D_TERM(auto const& u = input_state.getVel(0).const_array(mfi);,
                     auto const& v = input_state.getVel(1).const_array(mfi);,
                     auto const& w = input_state.getVel(2).const_array(mfi);)
 
-        reduce_op.eval(bx, reduce_data,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+        reduce_op.eval(bx, reduce_data, [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
             {
                 // discrete divergence at cell (i,j,k) from surrounding faces
                 amrex::Real div =
@@ -133,9 +133,9 @@ amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state
             });
     }
 
-    amrex::Real max_div = amrex::get<0>(reduce_data.value());
+    ReduceTuple hv = reduce_data.value(reduce_op);
+    amrex::Real max_div = amrex::get<0>(hv);
     amrex::ParallelDescriptor::ReduceRealMax(max_div);
-    
     return max_div;
 }
 
@@ -179,6 +179,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
 
     // write out divU_at_end_max_norm
     divU_at_end_max_norm = computeDivUMaxNorm(init_state);
+    divU_at_end_max_norm_support = computeDivUMaxNorm(init_state, &init_supp_ba);
 }
 
 void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
@@ -471,6 +472,7 @@ void ProjectionWorkspace::correctVelocityandPressure(amrex::Real gamma)
 
     // write out divU_at_end_max_norm
     divU_at_end_max_norm = computeDivUMaxNorm(stage);
+    divU_at_end_max_norm_support = computeDivUMaxNorm(stage, &tag_ba);
 }
 
 void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba)
@@ -529,9 +531,6 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
 
 void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
 {
-    // update the Poisson solver
-    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);    
-
     // update stage without worrying about data and so on
     stage.redefine(new_geom, new_ba, new_dm);
 

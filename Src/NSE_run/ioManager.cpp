@@ -216,6 +216,81 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
     amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 
+void IOManager::writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real time,
+                                        const FlowField& state,
+                                        const DomainManager& dom_mgr)
+{
+    // extracting plot requirements
+    amrex::BoxArray ba = dom_mgr.getBoxArr();
+    amrex::DistributionMapping dm = dom_mgr.getDistMap();
+    amrex::Geometry geom = dom_mgr.getGeom();
+
+    // construct MultiFab for plotting support region
+    amrex::MultiFab tagRegion(ba, dm, 1, 0);
+    for (MFIter mfi(tagRegion); mfi.isValid(); ++mfi)
+    {
+        const Box& bx = mfi.validbox();
+        tagRegion[mfi].setVal<RunOn::Device>(dom_mgr.getSuppBoxArr().intersects(bx) ? 1.0 : 0.0);
+    }
+
+    // checking total components for plotfile
+    int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
+
+    // building a multiFab with n dim + 2 components for plotting
+    amrex::MultiFab plotFab_cc(ba, dm, (2 * AMREX_SPACEDIM) + 5, 0);
+    amrex::MultiFab plotFab_nd(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, (2 * ncomp_vort), 0);
+    plotFab_cc.setVal(0.0);
+    plotFab_nd.setVal(0.0);
+
+    // create an array of pointers to the face-centered MultiFabs
+    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_vels;
+    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_errs; 
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        face_vels[d] = &state.getVel(d);
+        face_errs[d] = &dom_mgr.vel_refresh_err[d];
+    }
+
+    // averages all dimensions simultaneously into plotFab starting at component 0
+    amrex::average_face_to_cellcenter(plotFab_cc, 0, face_vels);
+    amrex::average_face_to_cellcenter(plotFab_cc, AMREX_SPACEDIM, face_errs);
+    
+    plotFab_cc.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
+    plotFab_cc.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
+    plotFab_cc.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
+    plotFab_cc.ParallelCopy(dom_mgr.divN, 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
+    plotFab_cc.ParallelCopy(dom_mgr.vort, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
+
+    plotFab_nd.ParallelCopy(dom_mgr.psi, 0, 0, ncomp_vort, 0, 0);
+    plotFab_nd.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
+
+    // exporting the names of the MultiFabs
+    amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"),
+                                                AMREX_D_DECL("x_vel_refr_corr", "y_vel_refr_corr", "z_vel_refr_corr"),
+                                                "pressure", "active_box_tag", "divUAtEnd", "tag_divN", "tag_vort"};
+    amrex::Vector<std::string> varnames_nd;
+
+    #if AMREX_SPACEDIM == 2
+        varnames_nd.push_back("z_psi");
+        varnames_nd.push_back("z_vorticity");
+    #elif AMREX_SPACEDIM == 3
+        varnames_nd.push_back("x_psi");
+        varnames_nd.push_back("y_psi");
+        varnames_nd.push_back("z_psi");
+        varnames_nd.push_back("x_vorticity");
+        varnames_nd.push_back("y_vorticity");
+        varnames_nd.push_back("z_vorticity");
+    #endif
+
+    // writing a simple plotfile
+    const std::string diagn_suffix = amrex::Concatenate("diag", diag_num, 2);
+    const std::string plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
+    amrex::Print() << "Writing diagnostic plotfiles to: " << plotfile_name << "\n";
+    WriteSingleLevelPlotfile((plotfile_name + "_cc" + diagn_suffix), plotFab_cc, varnames_cc, geom, time, step);
+    WriteSingleLevelPlotfile((plotfile_name + "_nd" + diagn_suffix), plotFab_nd, varnames_nd, geom, time, step);
+    amrex::Print() << "Diagnostic plotfiles written to: " << plotfile_name << "\n";
+}
+
 void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
 {   
     std::string write_dir = cfg.plot_dir + cfg.kedata_prefix;

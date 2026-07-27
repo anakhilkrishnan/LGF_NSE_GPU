@@ -52,6 +52,7 @@ class ProjectionWorkspace
 
         amrex::Real divU_max_norm;
         amrex::Real divU_at_end_max_norm;
+        amrex::Real divU_at_end_max_norm_support;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;
@@ -75,7 +76,7 @@ class ProjectionWorkspace
         void correctVelocityandPressure(amrex::Real gamma);
 
         amrex::Real computeDt(const FlowField& state_n) const;
-        amrex::Real computeDivUMaxNorm(const FlowField& input_state) const;
+        amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr) const;
         void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& tag_ba);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
