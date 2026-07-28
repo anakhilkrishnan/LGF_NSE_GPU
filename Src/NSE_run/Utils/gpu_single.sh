@@ -24,7 +24,7 @@ export OMP_NUM_THREADS=1
 # OpenMPI parameters
 export OMPI_MCA_pml=ucx
 export OMPI_MCA_osc=ucx
-export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,gdr_copy
+export UCX_TLS=rc,sm,cuda_copy,cuda_ipc
 export UCX_MEMTYPE_CACHE=n
 export UCX_RNDV_THRESH=8192
 
