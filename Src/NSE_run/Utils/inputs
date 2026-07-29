@@ -7,14 +7,14 @@ search_to_fine_ref_ratio = 4
 max_grid_size_tagging = 32
 n_ghost = 2 # must be >= 2
 n_comp = 1
-regrid_int = 1
+regrid_int = 5
 n_buffer_box = 2
 n_shed_box = 1
 domain_lo = -2.0 -2.0 -2.0
 domain_hi = 2.0 2.0 2.0
 
 rk_order = 2
-max_steps = 2
+max_steps = 5
 t_start = 0.0
 t_stop = 10.0
 cfl = 0.5
@@ -25,11 +25,11 @@ support_threshold = 1e-6
 n_lookup = 32
 
 write_plot = true
-plot_int = 1
+plot_int = 2
 plot_dir = "./Results"
 plot_prefix = "/plt"
 
-write_chk = false
+write_chk = true
 start_from_chk = false
 chk_int = 5
 chk_dir = "./Checkpoints/main"

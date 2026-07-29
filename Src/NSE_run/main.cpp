@@ -99,7 +99,7 @@ void extendedMain()
     if (io_cfg.write_plot && step == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(),dmgr.getDistMap());
+        io.writeMyPlotFile(0, true, step, time, state_n, dmgr);
 
     }
 
@@ -148,7 +148,7 @@ void extendedMain()
         if (step %io_cfg.plot_int == 0 &&io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(), dmgr.getDistMap());
+            io.writeMyPlotFile(0, true, step, time, state_n, dmgr);
         }
 
         // update domain based on results from timestep
@@ -158,9 +158,9 @@ void extendedMain()
             dmgr.updateSnugDomain(state_n);
             dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
-            io.writeMyDiagnosticPlotFile(1, step, time, state_n, dmgr);
+            io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
             dmgr.computeSuppBoxArr(state_n);
-            io.writeMyDiagnosticPlotFile(2, step, time, state_n, dmgr);
+            io.writeMyPlotFile(2, false, step, time, state_n, dmgr);
             auto regrid_stop_time = amrex::second();
             auto regrid_duration = regrid_stop_time - regrid_start_time;
 

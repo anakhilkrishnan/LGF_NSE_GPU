@@ -57,18 +57,8 @@ class IOManager
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
         void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba);
         void initializeFlowFieldFromChk(FlowField& init_state);
-        void writeMyPlotFile(int step, amrex::Real time, const FlowField& state, 
-                                const MultiFab& divU_star,
-                                const MultiFab& divN, 
-                                const MultiFab& psi, 
-                                const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_ref_err,
-                                const amrex::Geometry& geom, 
-                                const amrex::BoxArray& ba, 
-                                const amrex::BoxArray& supp_ba,
-                                const amrex::DistributionMapping& dm);
-        void writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real time,
-                                        const FlowField& state,
-                                        const DomainManager& dom_mgr);
+        void writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
+                                const FlowField& state, const DomainManager& dom_mgr);
         void writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         void initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
         

@@ -146,25 +146,29 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
-void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& state, 
-                                const MultiFab& divU_star,
-                                const MultiFab& divN, 
-                                const MultiFab& psi, 
-                                const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_ref_err,
-                                const amrex::Geometry& geom, 
-                                const amrex::BoxArray& ba, 
-                                const amrex::BoxArray& supp_ba,
-                                const amrex::DistributionMapping& dm)
+void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
+                                const FlowField& state, const DomainManager& dom_mgr)
 {
-    // This writer confines the plotted data to supp_ba (the support region),
-    // excluding the buffer boxes of Dxsoln from the file. The averaging and
-    // ParallelCopy machinery below is assembled on the FULL ba/dm (face->cc
-    // averaging requires the destination cc fab to share the source layout),
-    // then the assembled fabs are ParallelCopy'd onto a restricted grid,
-    // plot_ba = intersect(ba, supp_ba), which is what actually gets written.
+    // Single consolidated plot writer. Two orthogonal switches:
+    //   restrictToSupport : if true, the written grid is intersect(ba, supp_ba)
+    //                       (buffer excluded); if false, the full ba is written.
+    //   diag_num          : filename disambiguator so the SAME step can be
+    //                       plotted at different points in the solver flow
+    //                       without file collision. diag_num == 0 is the
+    //                       mainstream plot (no suffix); diag_num >= 1 appends
+    //                       an "xdiagNN" suffix.
+    // All grid and field data is pulled from dom_mgr, so the plotted quantities
+    // are whatever the domain manager currently holds (freshly valid after the
+    // last computeSuppBoxArr / vor2vel).
  
-    // construct MultiFab for plotting support region (kept for component layout
-    // parity; on the restricted grid every box lies in supp_ba, so this is ~1.0)
+    // extracting grid from the domain manager
+    amrex::BoxArray ba = dom_mgr.getBoxArr();
+    amrex::DistributionMapping dm = dom_mgr.getDistMap();
+    amrex::Geometry geom = dom_mgr.getGeom();
+    const amrex::BoxArray& supp_ba = dom_mgr.getSuppBoxArr();
+ 
+    // construct MultiFab for plotting support region (all-ones on a restricted
+    // grid; genuinely informative only when the full buffer is written)
     amrex::MultiFab tagRegion(ba, dm, 1, 0);
     for (MFIter mfi(tagRegion); mfi.isValid(); ++mfi)
     {
@@ -177,7 +181,9 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
     const int ncomp_cc = (2 * AMREX_SPACEDIM) + 5;
     const int ncomp_nd = (2 * ncomp_vort);
  
-    // building full-grid assembly fabs (support + buffer)
+    // building full-grid assembly fabs (support + buffer). face->cc averaging
+    // requires the destination cc fab to share the source (full ba) layout, so
+    // assembly always happens on the full grid regardless of restrictToSupport.
     amrex::MultiFab plotFab_cc_full(ba, dm, ncomp_cc, 0);
     amrex::MultiFab plotFab_nd_full(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, ncomp_nd, 0);
     plotFab_cc_full.setVal(0.0);
@@ -185,118 +191,56 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
  
     // create an array of pointers to the face-centered MultiFabs
     amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_vels;
-    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_errs; 
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_errs;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d)
     {
         face_vels[d] = &state.getVel(d);
-        face_errs[d] = &vel_ref_err[d];
+        face_errs[d] = &dom_mgr.vel_refresh_err[d];
     }
  
     // averages all dimensions simultaneously into plotFab starting at component 0
     amrex::average_face_to_cellcenter(plotFab_cc_full, 0, face_vels);
     amrex::average_face_to_cellcenter(plotFab_cc_full, AMREX_SPACEDIM, face_errs);
-    
+ 
     plotFab_cc_full.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
     plotFab_cc_full.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
-    plotFab_cc_full.ParallelCopy(divU_star, 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
-    plotFab_cc_full.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
-    plotFab_cc_full.ParallelCopy(divN, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(dom_mgr.divN, 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(dom_mgr.vort, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
  
-    plotFab_nd_full.ParallelCopy(psi, 0, 0, ncomp_vort, 0, 0);
+    plotFab_nd_full.ParallelCopy(dom_mgr.psi, 0, 0, ncomp_vort, 0, 0);
     plotFab_nd_full.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
  
-    // ---- restrict to supp_ba and copy assembled data onto the restricted grid ----
-    amrex::BoxArray plot_ba = amrex::intersect(ba, supp_ba);   // cell-centered support grid
-    amrex::DistributionMapping plot_dm(plot_ba);               // own mapping for the restricted grid
+    // choose the grid actually written: restricted support grid, or full ba.
+    // Bind references so the write section below is agnostic to which was chosen.
+    amrex::BoxArray plot_ba;
+    amrex::DistributionMapping plot_dm;
+    amrex::MultiFab plotFab_cc_restricted;
+    amrex::MultiFab plotFab_nd_restricted;
  
-    amrex::MultiFab plotFab_cc(plot_ba, plot_dm, ncomp_cc, 0);
-    amrex::MultiFab plotFab_nd(amrex::convert(plot_ba, amrex::IntVect::TheNodeVector()), plot_dm, ncomp_nd, 0);
-    plotFab_cc.setVal(0.0);
-    plotFab_nd.setVal(0.0);
- 
-    plotFab_cc.ParallelCopy(plotFab_cc_full, 0, 0, ncomp_cc, 0, 0);
-    plotFab_nd.ParallelCopy(plotFab_nd_full, 0, 0, ncomp_nd, 0, 0);
- 
-    // exporting the names of the MultiFabs
-    amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"),
-                                                AMREX_D_DECL("x_vel_refr_corr", "y_vel_refr_corr", "z_vel_refr_corr"),
-                                                "pressure", "active_box_tag", "divU", "divUAtEnd", "divN"};
-    amrex::Vector<std::string> varnames_nd;
- 
-    #if AMREX_SPACEDIM == 2
-        varnames_nd.push_back("z_psi");
-        varnames_nd.push_back("z_vorticity");
-    #elif AMREX_SPACEDIM == 3
-        varnames_nd.push_back("x_psi");
-        varnames_nd.push_back("y_psi");
-        varnames_nd.push_back("z_psi");
-        varnames_nd.push_back("x_vorticity");
-        varnames_nd.push_back("y_vorticity");
-        varnames_nd.push_back("z_vorticity");
-    #endif
- 
-    // writing a simple plotfile
-    const std::string& plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
-    amrex::Print() << "Writing plotfiles to: " << plotfile_name << "\n";
-    WriteSingleLevelPlotfile((plotfile_name + "_cc"), plotFab_cc, varnames_cc, geom, time, step);
-    WriteSingleLevelPlotfile((plotfile_name + "_nd"), plotFab_nd, varnames_nd, geom, time, step);
-    amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
-}
-
-void IOManager::writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real time,
-                                        const FlowField& state,
-                                        const DomainManager& dom_mgr)
-{
-    // extracting plot requirements
-    amrex::BoxArray ba = dom_mgr.getBoxArr();
-    amrex::DistributionMapping dm = dom_mgr.getDistMap();
-    amrex::Geometry geom = dom_mgr.getGeom();
-
-    // construct MultiFab for plotting support region
-    amrex::MultiFab tagRegion(ba, dm, 1, 0);
-    for (MFIter mfi(tagRegion); mfi.isValid(); ++mfi)
+    if (restrictToSupport)
     {
-        const Box& bx = mfi.validbox();
-        tagRegion[mfi].setVal<RunOn::Device>(dom_mgr.getSuppBoxArr().intersects(bx) ? 1.0 : 0.0);
+        plot_ba = amrex::intersect(ba, supp_ba);   // cell-centered support grid
+        plot_dm = amrex::DistributionMapping(plot_ba);
+ 
+        plotFab_cc_restricted.define(plot_ba, plot_dm, ncomp_cc, 0);
+        plotFab_nd_restricted.define(amrex::convert(plot_ba, amrex::IntVect::TheNodeVector()), plot_dm, ncomp_nd, 0);
+        plotFab_cc_restricted.setVal(0.0);
+        plotFab_nd_restricted.setVal(0.0);
+ 
+        plotFab_cc_restricted.ParallelCopy(plotFab_cc_full, 0, 0, ncomp_cc, 0, 0);
+        plotFab_nd_restricted.ParallelCopy(plotFab_nd_full, 0, 0, ncomp_nd, 0, 0);
     }
-
-    // checking total components for plotfile
-    int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
-
-    // building a multiFab with n dim + 2 components for plotting
-    amrex::MultiFab plotFab_cc(ba, dm, (2 * AMREX_SPACEDIM) + 5, 0);
-    amrex::MultiFab plotFab_nd(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, (2 * ncomp_vort), 0);
-    plotFab_cc.setVal(0.0);
-    plotFab_nd.setVal(0.0);
-
-    // create an array of pointers to the face-centered MultiFabs
-    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_vels;
-    amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_errs; 
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-    {
-        face_vels[d] = &state.getVel(d);
-        face_errs[d] = &dom_mgr.vel_refresh_err[d];
-    }
-
-    // averages all dimensions simultaneously into plotFab starting at component 0
-    amrex::average_face_to_cellcenter(plotFab_cc, 0, face_vels);
-    amrex::average_face_to_cellcenter(plotFab_cc, AMREX_SPACEDIM, face_errs);
-    
-    plotFab_cc.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
-    plotFab_cc.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
-    plotFab_cc.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
-    plotFab_cc.ParallelCopy(dom_mgr.divN, 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
-    plotFab_cc.ParallelCopy(dom_mgr.vort, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
-
-    plotFab_nd.ParallelCopy(dom_mgr.psi, 0, 0, ncomp_vort, 0, 0);
-    plotFab_nd.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
-
+ 
+    amrex::MultiFab& plotFab_cc = restrictToSupport ? plotFab_cc_restricted : plotFab_cc_full;
+    amrex::MultiFab& plotFab_nd = restrictToSupport ? plotFab_nd_restricted : plotFab_nd_full;
+ 
     // exporting the names of the MultiFabs
     amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"),
                                                 AMREX_D_DECL("x_vel_refr_corr", "y_vel_refr_corr", "z_vel_refr_corr"),
                                                 "pressure", "active_box_tag", "divUAtEnd", "tag_divN", "tag_vort"};
     amrex::Vector<std::string> varnames_nd;
-
+ 
     #if AMREX_SPACEDIM == 2
         varnames_nd.push_back("z_psi");
         varnames_nd.push_back("z_vorticity");
@@ -308,14 +252,16 @@ void IOManager::writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real ti
         varnames_nd.push_back("y_vorticity");
         varnames_nd.push_back("z_vorticity");
     #endif
-
-    // writing a simple plotfile
-    const std::string diagn_suffix = amrex::Concatenate("xdiag", diag_num, 2);
-    const std::string plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
-    amrex::Print() << "Writing diagnostic plotfiles to: " << plotfile_name << "\n";
-    WriteSingleLevelPlotfile((plotfile_name + "_cc" + diagn_suffix), plotFab_cc, varnames_cc, geom, time, step);
-    WriteSingleLevelPlotfile((plotfile_name + "_nd" + diagn_suffix), plotFab_nd, varnames_nd, geom, time, step);
-    amrex::Print() << "Diagnostic plotfiles written to: " << plotfile_name << "\n";
+ 
+    // filename: diag_num == 0 is the mainstream plot (no suffix); diag_num >= 1
+    // appends an xdiagNN suffix so the same step can be replotted without clash.
+    const std::string diag_suffix = (diag_num == 0) ? "" : amrex::Concatenate("_xdiag", diag_num, 2);
+    const std::string plotfile_name = (amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5)) + diag_suffix;
+    
+    amrex::Print() << "Writing plotfiles to: " << plotfile_name << "\n";
+    WriteSingleLevelPlotfile((plotfile_name + "_cc"), plotFab_cc, varnames_cc, geom, time, step);
+    WriteSingleLevelPlotfile((plotfile_name + "_nd"), plotFab_nd, varnames_nd, geom, time, step);
+    amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 
 void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
