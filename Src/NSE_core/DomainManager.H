@@ -32,6 +32,7 @@ class DomainManager
         amrex::DistributionMapping dm;
         
         // scratch variables
+        amrex::BoxArray old_supp_ba;
         amrex::Gpu::DeviceVector<int> supp_tag_arr;
         amrex::Vector<int>h_tag_arr;
 

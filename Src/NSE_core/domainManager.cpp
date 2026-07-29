@@ -258,6 +258,7 @@ void DomainManager::updateSnugDomain(const FlowField& state)
     // reads current flowfield state (as new search space), tags on search
     // space; uses tag information to update Geom, BoxArr, DistMap; 
 
+    old_supp_ba = supp_ba;
     computeSuppBoxArr(state);
 
     amrex::BoxArray xsoln_ba = supp_ba;
@@ -297,7 +298,8 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
+        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))
+            && old_supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& u_arr = state.getVel(0).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
@@ -316,7 +318,8 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     {
         const amrex::Box& bx = mfi.tilebox();
         // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
+        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))
+            && old_supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& v_arr = state.getVel(1).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
