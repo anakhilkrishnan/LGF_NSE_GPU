@@ -44,7 +44,7 @@ class DomainManager
 
         // supporting functions
         void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
-        void updateGeomBaDm(amrex::BoxArray& tag_ba);
+        void updateGeomBaDm(const amrex::BoxArray& new_ba);
 
     public:
         // scratch type variables
@@ -64,6 +64,7 @@ class DomainManager
         DomainManager(const SolverConfig& config);
         void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain();
+        void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
         int computeRegridInterval(const FlowField& state) const;
         void updateSnugDomain(const FlowField& state);
 

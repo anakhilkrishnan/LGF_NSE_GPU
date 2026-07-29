@@ -35,28 +35,55 @@ void extendedMain()
     amrex::Real dt_master = 0.0; // master, not to be confused with workspace.dt
     int step = 0;
 
-    // PENDING: setup checkpoint restart again with DomainManager
     DomainManager dmgr(sol_cfg);
     
-    // extract correct region and update geom, boxarr and distmap
-    dmgr.initializeSnugDomain();
+    // check if BoxArray comes from domain search and initialization, or checkpoint
+    if (io_cfg.start_from_chk)
+    {
+        amrex::BoxArray chk_ba;
+        amrex::BoxArray chk_supp_ba;
+        io.initializeBoxArrFromChk(step, time, chk_ba, chk_supp_ba);
+        dmgr.restartSnugDomain(chk_ba, chk_supp_ba);
+    }
+    else
+    {
+        // extract correct region and update geom, boxarr and distmap
+        dmgr.initializeSnugDomain();
+    }
+    
 
     // create flow field object
     FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg.n_comp, sol_cfg.n_ghost);
     // create solver object
     ProjectionWorkspace workspace(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
 
-    // starting from initial conditions
-    initializeVelField(state_n);
+    if (io_cfg.start_from_chk)
+    {
+        io.initializeFlowFieldFromChk(state_n);
+        state_n.setBoundary();
 
-    // fill ghost cells and apply physical BCs
-    state_n.setBoundary();
+        const amrex::BoxArray restart_supp_ba = dmgr.getSuppBoxArr();
+        workspace.divU_max_norm = 0.0;
+        workspace.divU_at_end_max_norm = workspace.computeDivUMaxNorm(state_n);
+        workspace.divU_at_end_max_norm_support = workspace.computeDivUMaxNorm(state_n, &restart_supp_ba);
+    }
+    else
+    {
+        time = sol_cfg.t_start;
+        step = 0;
 
-    // tag again on the fine grid to prep for the solver, don't shed outer layer here
-    dmgr.computeSuppBoxArr(state_n, false);
-    
-    // populating pressure based on divergence of Navier-Stokes at initial conditions
-    workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
+        // starting from initial conditions
+        initializeVelField(state_n);
+
+        // fill ghost cells and apply physical BCs
+        state_n.setBoundary();
+
+        // tag again on the fine grid to prep for the solver, don't shed outer layer here
+        dmgr.computeSuppBoxArr(state_n, false);
+        
+        // populating pressure based on divergence of Navier-Stokes at initial conditions
+        workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
+    }
 
     // populating KE comp arrays
     workspace.computeKEFromState(state_n);
@@ -67,9 +94,6 @@ void extendedMain()
 
     // fill ghost cells and apply physical BCs
     state_n.setBoundary();
-
-    time = sol_cfg.t_start;
-    step = 0;
     
     // plotting initial conditions
     if (io_cfg.write_plot && step == 0)
@@ -127,15 +151,6 @@ void extendedMain()
             io.writeMyPlotFile(step, time, state_n, workspace.divU, dmgr.divN, dmgr.psi, dmgr.vel_refresh_err, dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getSuppBoxArr(), dmgr.getDistMap());
         }
 
-        // write checkpoints in specified intervals, write fallback 'alt' checkpoints
-        // 5 steps after specified interval
-        if ((step %io_cfg.chk_int == 0 || (step - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
-        {
-            BL_PROFILE("<IO> Interval Checkpoint()");
-            io.writeMyChkFile(writeMainChk, step, time, state_n);
-            writeMainChk = !writeMainChk;
-        }
-
         // update domain based on results from timestep
         if (step % dmgr.computeRegridInterval(state_n) == 0)
         {
@@ -155,6 +170,15 @@ void extendedMain()
                                         << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
                                         << " | w-refresh err: " << dmgr.refresh_err_max_norm[2])
                             << "\n";
+        }
+
+        // write checkpoints in specified intervals, write fallback 'alt' checkpoints
+        // 5 steps after specified interval
+        if ((step %io_cfg.chk_int == 0 || (step - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
+        {
+            BL_PROFILE("<IO> Interval Checkpoint()");
+            io.writeMyChkFile(writeMainChk, step, time, state_n, dmgr.getSuppBoxArr());
+            writeMainChk = !writeMainChk;
         }
 
         // track duration of timestep

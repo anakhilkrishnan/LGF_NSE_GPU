@@ -49,7 +49,7 @@ void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_gri
     xsoln_ba.maxSize(max_grid_size_req);  // re-chunk to compute box size
 }
 
-void DomainManager::updateGeomBaDm(amrex::BoxArray& new_ba)
+void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
 {    
     // update members
     ba = new_ba;
@@ -93,6 +93,25 @@ void DomainManager::initializeSnugDomain()
 
     // initialize error multifab to zero
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
+    {
+        vel_refresh_err[idim].define(ba, dm, 1, 0);
+        vel_refresh_err[idim].setVal(0.0);
+    }
+}
+
+void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba)
+{
+    BL_PROFILE("<IO> restartSnugDomain()")
+    // the checkpoint's BoxArray already encodes the fine-resolution Dxsoln
+    // (support + buffer) from when the checkpoint was written. Adopt it directly
+    // and rebuild geom/ba/dm around it, bypassing the search-grid path in
+    // initializeSnugDomain()
+    updateGeomBaDm(chk_ba);
+    supp_ba = chk_supp_ba;
+
+    // size the velocity-refresh diagnostic arrays so plotting is safe before the
+    // first regrid repopulates them inside vor2vel().
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         vel_refresh_err[idim].define(ba, dm, 1, 0);
         vel_refresh_err[idim].setVal(0.0);

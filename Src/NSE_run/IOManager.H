@@ -54,8 +54,8 @@ class IOManager
     public:
 
         IOManager(const IOConfig& config);
-        void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state);
-        void initializeBAFromChk(int& step, amrex::Real& time, amrex::BoxArray& ba);
+        void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
+        void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba);
         void initializeFlowFieldFromChk(FlowField& init_state);
         void writeMyPlotFile(int step, amrex::Real time, const FlowField& state, 
                                 const MultiFab& divU_star,

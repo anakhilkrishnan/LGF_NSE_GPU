@@ -7,7 +7,7 @@ IOManager::IOManager(const IOConfig& config) : cfg(config)
 
 // PENDING: Write Chk and Plt data for KE as well!!
 
-void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state)
+void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba)
 {
     // PENDING: Modify to write checkpoints for AMR data
 
@@ -42,6 +42,8 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         HeaderFile.precision(17);
         HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n";
         state.getPres().boxArray().writeOn(HeaderFile);
+        HeaderFile << "\n";
+        supp_ba.writeOn(HeaderFile);
         HeaderFile << "\n";
         HeaderFile.close();
     }
@@ -103,7 +105,7 @@ void IOManager::whichChkDirBetter()
 }
 
 // reading BA data from checkpoint
-void IOManager::initializeBAFromChk(int& step, amrex::Real& time, amrex::BoxArray& ba)
+void IOManager::initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba)
 {
     whichChkDirBetter();
     std::string restart_dir = better_dir + cfg.chk_prefix;
@@ -121,7 +123,10 @@ void IOManager::initializeBAFromChk(int& step, amrex::Real& time, amrex::BoxArra
     is >> time;
 
     // extracting BoxArray from chk file
-    ba.readFrom(is);
+    chk_ba.readFrom(is);
+
+    // extracting supp_ba from chk file
+    chk_supp_ba.readFrom(is);
 }
 
 void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
@@ -151,23 +156,33 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
                                 const amrex::BoxArray& supp_ba,
                                 const amrex::DistributionMapping& dm)
 {
-    // construct MultiFab for plotting support region
+    // This writer confines the plotted data to supp_ba (the support region),
+    // excluding the buffer boxes of Dxsoln from the file. The averaging and
+    // ParallelCopy machinery below is assembled on the FULL ba/dm (face->cc
+    // averaging requires the destination cc fab to share the source layout),
+    // then the assembled fabs are ParallelCopy'd onto a restricted grid,
+    // plot_ba = intersect(ba, supp_ba), which is what actually gets written.
+ 
+    // construct MultiFab for plotting support region (kept for component layout
+    // parity; on the restricted grid every box lies in supp_ba, so this is ~1.0)
     amrex::MultiFab tagRegion(ba, dm, 1, 0);
     for (MFIter mfi(tagRegion); mfi.isValid(); ++mfi)
     {
         const Box& bx = mfi.validbox();
         tagRegion[mfi].setVal<RunOn::Device>(supp_ba.intersects(bx) ? 1.0 : 0.0);
     }
-
+ 
     // checking total components for plotfile
     int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
-
-    // building a multiFab with n dim + 2 components for plotting
-    amrex::MultiFab plotFab_cc(ba, dm, (2 * AMREX_SPACEDIM) + 5, 0);
-    amrex::MultiFab plotFab_nd(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, (2 * ncomp_vort), 0);
-    plotFab_cc.setVal(0.0);
-    plotFab_nd.setVal(0.0);
-
+    const int ncomp_cc = (2 * AMREX_SPACEDIM) + 5;
+    const int ncomp_nd = (2 * ncomp_vort);
+ 
+    // building full-grid assembly fabs (support + buffer)
+    amrex::MultiFab plotFab_cc_full(ba, dm, ncomp_cc, 0);
+    amrex::MultiFab plotFab_nd_full(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, ncomp_nd, 0);
+    plotFab_cc_full.setVal(0.0);
+    plotFab_nd_full.setVal(0.0);
+ 
     // create an array of pointers to the face-centered MultiFabs
     amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_vels;
     amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM> face_errs; 
@@ -176,26 +191,38 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
         face_vels[d] = &state.getVel(d);
         face_errs[d] = &vel_ref_err[d];
     }
-
+ 
     // averages all dimensions simultaneously into plotFab starting at component 0
-    amrex::average_face_to_cellcenter(plotFab_cc, 0, face_vels);
-    amrex::average_face_to_cellcenter(plotFab_cc, AMREX_SPACEDIM, face_errs);
+    amrex::average_face_to_cellcenter(plotFab_cc_full, 0, face_vels);
+    amrex::average_face_to_cellcenter(plotFab_cc_full, AMREX_SPACEDIM, face_errs);
     
-    plotFab_cc.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
-    plotFab_cc.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
-    plotFab_cc.ParallelCopy(divU_star, 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
-    plotFab_cc.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
-    plotFab_cc.ParallelCopy(divN, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
-
-    plotFab_nd.ParallelCopy(psi, 0, 0, ncomp_vort, 0, 0);
-    plotFab_nd.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
-
+    plotFab_cc_full.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(divU_star, 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(divN, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
+ 
+    plotFab_nd_full.ParallelCopy(psi, 0, 0, ncomp_vort, 0, 0);
+    plotFab_nd_full.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
+ 
+    // ---- restrict to supp_ba and copy assembled data onto the restricted grid ----
+    amrex::BoxArray plot_ba = amrex::intersect(ba, supp_ba);   // cell-centered support grid
+    amrex::DistributionMapping plot_dm(plot_ba);               // own mapping for the restricted grid
+ 
+    amrex::MultiFab plotFab_cc(plot_ba, plot_dm, ncomp_cc, 0);
+    amrex::MultiFab plotFab_nd(amrex::convert(plot_ba, amrex::IntVect::TheNodeVector()), plot_dm, ncomp_nd, 0);
+    plotFab_cc.setVal(0.0);
+    plotFab_nd.setVal(0.0);
+ 
+    plotFab_cc.ParallelCopy(plotFab_cc_full, 0, 0, ncomp_cc, 0, 0);
+    plotFab_nd.ParallelCopy(plotFab_nd_full, 0, 0, ncomp_nd, 0, 0);
+ 
     // exporting the names of the MultiFabs
     amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity"),
                                                 AMREX_D_DECL("x_vel_refr_corr", "y_vel_refr_corr", "z_vel_refr_corr"),
                                                 "pressure", "active_box_tag", "divU", "divUAtEnd", "divN"};
     amrex::Vector<std::string> varnames_nd;
-
+ 
     #if AMREX_SPACEDIM == 2
         varnames_nd.push_back("z_psi");
         varnames_nd.push_back("z_vorticity");
@@ -207,7 +234,7 @@ void IOManager::writeMyPlotFile(int step, amrex::Real time, const FlowField& sta
         varnames_nd.push_back("y_vorticity");
         varnames_nd.push_back("z_vorticity");
     #endif
-
+ 
     // writing a simple plotfile
     const std::string& plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
     amrex::Print() << "Writing plotfiles to: " << plotfile_name << "\n";
@@ -283,7 +310,7 @@ void IOManager::writeMyDiagnosticPlotFile(int diag_num, int step, amrex::Real ti
     #endif
 
     // writing a simple plotfile
-    const std::string diagn_suffix = amrex::Concatenate("diag", diag_num, 2);
+    const std::string diagn_suffix = amrex::Concatenate("xdiag", diag_num, 2);
     const std::string plotfile_name = amrex::Concatenate((cfg.plot_dir + cfg.plot_prefix), step, 5);
     amrex::Print() << "Writing diagnostic plotfiles to: " << plotfile_name << "\n";
     WriteSingleLevelPlotfile((plotfile_name + "_cc" + diagn_suffix), plotFab_cc, varnames_cc, geom, time, step);
