@@ -297,9 +297,6 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     for (amrex::MFIter mfi(state.getVel(0), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
-        // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))
-            && old_supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& u_arr = state.getVel(0).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
@@ -317,9 +314,6 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     for (amrex::MFIter mfi(state.getVel(1), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
-        // early exit if box is fully within support
-        if (supp_ba.contains(amrex::enclosedCells(mfi.validbox()))
-            && old_supp_ba.contains(amrex::enclosedCells(mfi.validbox()))) { continue; }
 
         auto const& v_arr = state.getVel(1).array(mfi);
         auto const& psi_arr   = psi.const_array(mfi);
