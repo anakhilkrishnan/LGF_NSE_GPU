@@ -162,7 +162,20 @@ void extendedMain()
             {
                 io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
             }
+
+            // test to see if second tagging was the one being problematic
+            amrex::BoxArray supp_before = dmgr.getSuppBoxArr();   // copy before
             dmgr.computeSuppBoxArr(state_n);
+            amrex::BoxArray supp_after = dmgr.getSuppBoxArr();    // copy after
+
+            // compare
+            bool same = (supp_before == supp_after);
+            amrex::Print() << "step " << step << " | 2nd-tag changed supp_ba: "
+                        << (same ? "NO" : "YES")
+                        << " | before=" << supp_before.size()
+                        << " after=" << supp_after.size() << "\n";
+
+                         
             auto regrid_stop_time = amrex::second();
             auto regrid_duration = regrid_stop_time - regrid_start_time;
 

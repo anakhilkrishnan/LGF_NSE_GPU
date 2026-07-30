@@ -233,7 +233,16 @@ void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
     const amrex::Real* data_ptr = consolData.dataPtr();
     const FabMetaData* meta_ptr = consolMetadata.dataPtr();
 
-    amrex::Box dom = geom.Domain();
+    // create a DeviceVector of boxes for kernel testing
+    const amrex::BoxArray target_ba = target.boxArray();
+    amrex::Gpu::DeviceVector<amrex::Box> d_cover_boxes(target_ba.size());
+    amrex::Vector<amrex::Box> h(target_ba.size());
+
+    for (int b = 0; b < target_ba.size(); ++b) { h[b] = target_ba[b];} 
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice, h.begin(), h.end(), d_cover_boxes.begin());
+    
+    const amrex::Box* cover_ptr = d_cover_boxes.dataPtr();
+    const int n_cover = target_ba.size();
     
     // Loop over target boxes in a separate MFIter
 #ifdef AMREX_USE_OMP
@@ -250,14 +259,16 @@ void DirectSumLGF::solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& 
         amrex::ParallelFor(targetbox, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {   
             amrex::IntVect cell(AMREX_D_DECL(i,j,k));
-            
             if (!valid_box.contains(cell))
             {
-                if (dom.contains(cell))
+                bool covered = false;
+                for (int b = 0; b < n_cover; ++b) 
                 {
-                    return;
+                    if (cover_ptr[b].contains(cell)) { covered = true; break; }
                 }
+                if (covered) { return; }
             }
+
             // extract physical coordinates of target cell
             amrex::Real AMREX_D_DECL(x_tar = prob_lo[0] + (i + 0.5) * dx[0],
                                       y_tar = prob_lo[1] + (j + 0.5) * dx[1],
@@ -327,7 +338,16 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
     const amrex::Real* data_ptr = consolData.dataPtr();
     const FabMetaData* meta_ptr = consolMetadata.dataPtr();
 
-    amrex::Box dom = amrex::convert(geom.Domain(), amrex::IntVect::TheNodeVector());
+    // create a DeviceVector of boxes for kernel testing
+    const amrex::BoxArray target_ba = amrex::convert(target.boxArray(), amrex::IntVect::TheNodeVector());
+    amrex::Gpu::DeviceVector<amrex::Box> d_cover_boxes(target_ba.size());
+    amrex::Vector<amrex::Box> h(target_ba.size());
+
+    for (int b = 0; b < target_ba.size(); ++b) { h[b] = target_ba[b];} 
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice, h.begin(), h.end(), d_cover_boxes.begin());
+    
+    const amrex::Box* cover_ptr = d_cover_boxes.dataPtr();
+    const int n_cover = target_ba.size();
 
 #ifdef AMREX_USE_OMP
     #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -343,7 +363,15 @@ void DirectSumLGF::solveNodalPoisson(const amrex::MultiFab& source, amrex::Multi
         amrex::ParallelFor(targetbox, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {   
             amrex::IntVect node(AMREX_D_DECL(i,j,k));
-            if (!valid_box.contains(node)) { if (dom.contains(node)) { return; } }
+            if (!valid_box.contains(node))
+            {
+                bool covered = false;
+                for (int b = 0; b < n_cover; ++b) 
+                {
+                    if (cover_ptr[b].contains(node)) { covered = true; break; }
+                }
+                if (covered) { return; }
+            }
 
             // NODAL: no +0.5
             amrex::Real AMREX_D_DECL(x_tar = prob_lo[0] + i * dx[0],
