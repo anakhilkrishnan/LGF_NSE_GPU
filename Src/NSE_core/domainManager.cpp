@@ -40,6 +40,9 @@ DomainManager::DomainManager(const SolverConfig& config)
     amrex::RealBox real_box(dom_lo, dom_hi);
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
+
+    // initialization of other members
+    did_snug_domain_change = false;
 }
 
 void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_grid_size_req)
@@ -78,9 +81,6 @@ void DomainManager::initializeSnugDomain()
     search_state.setBoundary();
 
     computeSuppBoxArr(search_state, false); // can't shed outer layer as it has never been tagged before
-
-    psi.define(vort.boxArray(), vort.DistributionMap(), vort.nComp(), vort.nGrow());
-    psi.setVal(0.0);
 
     amrex::BoxArray xsoln_ba = supp_ba;
     
@@ -252,20 +252,35 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
 #endif
 }
 
-void DomainManager::updateSnugDomain(const FlowField& state)
+void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
 {
-    BL_PROFILE("<Compute>updateSnugDomain()")
-    // reads current flowfield state (as new search space), tags on search
-    // space; uses tag information to update Geom, BoxArr, DistMap; 
+    BL_PROFILE("<Compute> checkAndUpdateSnugDomain");
 
+    // reset flag to false
+    did_snug_domain_change = false;
+
+    // save previous for checks and refresh
     old_supp_ba = supp_ba;
+
+    // tag on current flow field
     computeSuppBoxArr(state);
 
-    amrex::BoxArray xsoln_ba = supp_ba;
+    if (old_supp_ba == supp_ba)
+    {
+        // set refresh flag to false and exit
+        did_snug_domain_change = false;
+    }
+    else
+    {   
+        // set refresh flat to true
+        did_snug_domain_change = true;
 
-    growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size);
-
-    updateGeomBaDm(xsoln_ba);
+        // update ba, geom, dm
+        amrex::BoxArray xsoln_ba = supp_ba;
+        growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size); // grown to full buffer size
+        updateGeomBaDm(xsoln_ba);
+    }
+    amrex::Print() << "Support changed? " << did_snug_domain_change << "\n";
 }
 
 void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
@@ -279,7 +294,17 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
     psi.setVal(0.0);// compute streamfunction ONLY on buffer nodes
     vort_nd.mult(-1.0); // source term is -omega_z
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, supp_ba);
+
+    // create intersection of supp_ba and old_supp_ba, for the vorticity that
+    // must be considered for the streamfunction compute
+    amrex::BoxArray tag_ba = supp_ba;
+    if (did_snug_domain_change)
+    {
+        tag_ba = amrex::intersect(old_supp_ba, supp_ba);
+    }
+    
+    // compute streamfunction using poisson solve
+    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, tag_ba);
     psi.FillBoundary(geom.periodicity());
 
     // initialize error multifab to zero
@@ -336,42 +361,45 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     state.setBoundary();
 }
 
-void DomainManager::regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
+void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver, int step)
 {
-    // recognizes geom, ba, dm members have been updated, do not match current
-    // input state
-    
-    // create new state with new geom, ba, dm
-    FlowField new_state(geom, ba, dm, n_comp, n_ghost);
-
-    // copy Dxsoln from old state into new state
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    // update flow field onto the new geom, ba, dm
+    if (did_snug_domain_change)
     {
-        new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
-        new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
-    }
-    new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
-    new_state.setBoundary();
+        // create new state with new geom, ba, dm
+        FlowField new_state(geom, ba, dm, n_comp, n_ghost);
 
-    // local test to see if grow/rechunk actually affects the solver due to the
-    // choice between intersect tag and contain tag
-    int n_contain = 0, n_intersect = 0;
-    for (MFIter mfi(new_state.getPres()); mfi.isValid(); ++mfi)
+        // copy Dxsoln from old state into new state
+        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+        {
+            new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
+            new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
+        }
+        // new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
+        new_state.setBoundary();
+
+        // local test to see if grow/rechunk actually affects the solver due to the
+        // choice between intersect tag and contain tag
+        int n_contain = 0, n_intersect = 0;
+        for (MFIter mfi(new_state.getPres()); mfi.isValid(); ++mfi)
+        {
+            const Box& bx = mfi.validbox();
+            if (supp_ba.contains(bx))   n_contain++;
+            if (supp_ba.intersects(bx)) n_intersect++;
+        }
+        amrex::Print() << "contain-tagged: " << n_contain
+                    << " | intersect-tagged: " << n_intersect << "\n";
+
+        // update the Poisson solver
+        lgf_nodal_poisson_solver.regridOnto(geom, ba, dm);   
+
+        // move new_state back into state to continue
+        state = std::move(new_state);
+    }
+
+    // check if a refresh is needed
+    if (step % computeRegridInterval(state) == 0 || did_snug_domain_change)
     {
-        const Box& bx = mfi.validbox();
-        if (supp_ba.contains(bx))   n_contain++;
-        if (supp_ba.intersects(bx)) n_intersect++;
+        vor2vel(state, lgf_nodal_poisson_solver);
     }
-    amrex::Print() << "contain-tagged: " << n_contain
-                << " | intersect-tagged: " << n_intersect << "\n";
-
-    // update the Poisson solver
-    lgf_nodal_poisson_solver.regridOnto(geom, ba, dm);    
-
-    // use supp_tag_arr (now updated with Dsupp found when creating new geom,
-    // ba, dm) to avoid vel refresh on Dsupp. Only Dbuff needs the update
-    vor2vel(new_state, lgf_nodal_poisson_solver);
-
-    // move new_state back into state to continue
-    state = std::move(new_state);
 }

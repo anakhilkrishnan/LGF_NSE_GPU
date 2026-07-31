@@ -5,6 +5,7 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_BoxList.H>
+#include <AMReX_BoxArray.H>
 #include <AMReX_BCRec.H>
 #include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
@@ -46,9 +47,11 @@ class DomainManager
         // supporting functions
         void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
         void updateGeomBaDm(const amrex::BoxArray& new_ba);
+        int computeRegridInterval(const FlowField& state) const;
 
     public:
         // scratch type variables
+        bool did_snug_domain_change;
         amrex::MultiFab psi;
         amrex::MultiFab vort;
         amrex::MultiFab divN;
@@ -60,18 +63,19 @@ class DomainManager
         amrex::BoxArray getSuppBoxArr() const { return supp_ba; }
         amrex::DistributionMapping getDistMap() const { return dm; }
         amrex::Geometry getGeom() const { return geom; }
+        bool didSnugDomainChange() const { return did_snug_domain_change; }
 
         // primary functionality
         DomainManager(const SolverConfig& config);
         void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain();
         void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
-        int computeRegridInterval(const FlowField& state) const;
-        void updateSnugDomain(const FlowField& state);
+        void checkAndUpdateSnugDomain(const FlowField& state);
+        void checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver, int step);
+        
 
         // supporting functions
         void vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver);
-        void regridFlowFieldOntoNewSnugDomain(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver);
 };  
 
 #endif

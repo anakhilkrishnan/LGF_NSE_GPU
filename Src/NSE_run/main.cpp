@@ -50,7 +50,6 @@ void extendedMain()
         // extract correct region and update geom, boxarr and distmap
         dmgr.initializeSnugDomain();
     }
-    
 
     // create flow field object
     FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg.n_comp, sol_cfg.n_ghost);
@@ -78,7 +77,7 @@ void extendedMain()
         // fill ghost cells and apply physical BCs
         state_n.setBoundary();
 
-        // tag again on the fine grid to prep for the solver, don't shed outer layer here
+        // tag to refresh supp_ba alone on the fine initialization
         dmgr.computeSuppBoxArr(state_n, false);
         
         // populating pressure based on divergence of Navier-Stokes at initial conditions
@@ -151,41 +150,61 @@ void extendedMain()
             io.writeMyPlotFile(0, io_cfg.plot_only_support, step, time, state_n, dmgr);
         }
 
-        // update domain based on results from timestep
-        if (step % dmgr.computeRegridInterval(state_n) == 0)
+        
+        // snug domain management after timestep
+        auto regrid_start_time = amrex::second();
+
+        dmgr.checkAndUpdateSnugDomain(state_n);
+        dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step);
+
+        if (dmgr.did_snug_domain_change)
         {
-            auto regrid_start_time = amrex::second();
-            dmgr.updateSnugDomain(state_n);
-            dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
-            if (io_cfg.plot_post_regrid && step % io_cfg.plot_post_regrid_int == 0)
-            {
-                io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
-            }
-
-            // test to see if second tagging was the one being problematic
-            amrex::BoxArray supp_before = dmgr.getSuppBoxArr();   // copy before
-            dmgr.computeSuppBoxArr(state_n);
-            amrex::BoxArray supp_after = dmgr.getSuppBoxArr();    // copy after
-
-            // compare
-            bool same = (supp_before == supp_after);
-            amrex::Print() << "step " << step << " | 2nd-tag changed supp_ba: "
-                        << (same ? "NO" : "YES")
-                        << " | before=" << supp_before.size()
-                        << " after=" << supp_after.size() << "\n";
-
-                         
-            auto regrid_stop_time = amrex::second();
-            auto regrid_duration = regrid_stop_time - regrid_start_time;
-
-            amrex::Print() << "Regridding done at end of step " << step
-                            << " | WallTime: " << (regrid_duration) << "s"
-                            AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
-                                        << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
-                                        << " | w-refresh err: " << dmgr.refresh_err_max_norm[2])
-                            << "\n";
         }
+
+        // plot diagnostics
+        if (dmgr.did_snug_domain_change || io_cfg.plot_post_regrid && step % io_cfg.plot_post_regrid_int == 0)
+        {
+            io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
+        }
+
+        // refresh flag 
+        dmgr.did_snug_domain_change = false;
+
+        // solver time and output
+        auto regrid_stop_time = amrex::second();
+        auto regrid_duration = regrid_stop_time - regrid_start_time;
+
+        amrex::Print() << "Snug domain management at end of step " << step
+                        << " complete | WallTime: " << (regrid_duration) << "s"
+                        AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
+                                    << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
+                                    << " | w-refresh err: " << dmgr.refresh_err_max_norm[2]) << "\n";
+
+        // // update domain based on results from timestep
+        // if (step % dmgr.computeRegridInterval(state_n) == 0)
+        // {
+        //     
+        //     dmgr.updateSnugDomain(state_n);
+        //     dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
+        //     workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+        //     if (io_cfg.plot_post_regrid && step % io_cfg.plot_post_regrid_int == 0)
+        //     {
+        //         io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
+        //     }
+
+        //     // test to see if second tagging was the one being problematic
+        //     amrex::BoxArray supp_before = dmgr.getSuppBoxArr();   // copy before
+        //     dmgr.computeSuppBoxArr(state_n);
+        //     amrex::BoxArray supp_after = dmgr.getSuppBoxArr();    // copy after
+
+        //     // compare
+        //     bool same = (supp_before == supp_after);
+        //     amrex::Print() << "step " << step << " | 2nd-tag changed supp_ba: "
+        //                 << (same ? "NO" : "YES")
+        //                 << " | before=" << supp_before.size()
+        //                 << " after=" << supp_after.size() << "\n";
+        // }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval
