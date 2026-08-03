@@ -53,7 +53,23 @@ void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_gri
 }
 
 void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
-{    
+{   
+    // box array check 
+#ifdef AMREX_USE_MPI
+    long h = new_ba.size();
+    for (int i = 0; i < new_ba.size(); ++i) {
+        const amrex::Box& b = new_ba[i];
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            h = h*1000003L + b.smallEnd(d);
+            h = h*1000003L + b.bigEnd(d);
+        }
+    }
+    long hmin=h, hmax=h;
+    amrex::ParallelDescriptor::ReduceLongMin(hmin);
+    amrex::ParallelDescriptor::ReduceLongMax(hmax);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(hmin==hmax, "new_ba differs across ranks after growBoxArr");
+#endif
+
     // update members
     ba = new_ba;
     dm.define(ba);
@@ -256,9 +272,6 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
 {
     BL_PROFILE("<Compute> checkAndUpdateSnugDomain");
 
-    // reset flag to false
-    did_snug_domain_change = false;
-
     // save previous for checks and refresh
     old_supp_ba = supp_ba;
 
@@ -281,6 +294,15 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
         updateGeomBaDm(xsoln_ba);
     }
     amrex::Print() << "Support changed? " << did_snug_domain_change << "\n";
+
+#ifdef AMREX_USE_MPI
+    int flag_int = did_snug_domain_change ? 1 : 0;
+    int flag_min = flag_int, flag_max = flag_int;
+    amrex::ParallelDescriptor::ReduceIntMin(flag_min);
+    amrex::ParallelDescriptor::ReduceIntMax(flag_max);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(flag_min == flag_max,
+        "did_snug_domain_change diverged across ranks!");
+#endif
 }
 
 void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
@@ -369,11 +391,21 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_
         // create new state with new geom, ba, dm
         FlowField new_state(geom, ba, dm, n_comp, n_ghost);
 
+        amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
+                << " step " << step
+                << " | old state ba hash / size: " << state.getPres().boxArray().size()
+                << " | new ba size: " << ba.size()
+                << " | new_state local boxes: " << new_state.getPres().local_size()
+                << " | old state local boxes: " << state.getPres().local_size() << "\n";
+
         // copy Dxsoln from old state into new state
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
         {
+            amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " pre-vel-PC dim " << idim << "\n";
             new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
+            amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " post-vel-PC dim " << idim << "\n";
             new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
+            amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " post-KE-PC dim " << idim << "\n";
         }
         // new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
         new_state.setBoundary();

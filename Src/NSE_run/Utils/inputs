@@ -26,8 +26,8 @@ n_lookup = 32
 
 write_plot = true
 plot_int = 2
-plot_post_regrid = false
-plot_post_regrid_int = 8
+plot_post_regrid = true
+plot_post_regrid_int = 2
 plot_only_support = false
 plot_dir = "./Results"
 plot_prefix = "/plt"

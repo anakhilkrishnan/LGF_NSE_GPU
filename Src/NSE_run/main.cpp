@@ -155,6 +155,7 @@ void extendedMain()
         auto regrid_start_time = amrex::second();
 
         dmgr.checkAndUpdateSnugDomain(state_n);
+        
         dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step);
 
         if (dmgr.did_snug_domain_change)
