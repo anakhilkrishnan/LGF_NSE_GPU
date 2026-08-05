@@ -35,7 +35,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     ba.define(domain);
     ba.maxSize(config.max_grid_size_search);
     
-    dm.define(ba);
+    dm = amrex::DistributionMapping(ba);
 
     amrex::RealBox real_box(dom_lo, dom_hi);
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
@@ -72,7 +72,7 @@ void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
 
     // update members
     ba = new_ba;
-    dm.define(ba);
+    dm = amrex::DistributionMapping(ba);
 
     // geom: same physical RealBox, but FINE resolution domain box
     amrex::Box fine_domain(amrex::IntVect(0), amrex::IntVect(AMREX_D_DECL(n_cell-1, n_cell-1, n_cell-1)));
@@ -110,7 +110,8 @@ void DomainManager::initializeSnugDomain()
     // initialize error multifab to zero
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
     {
-        vel_refresh_err[idim].define(ba, dm, 1, 0);
+        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
+        vel_refresh_err[idim].define(ba_face, dm, n_comp, 0);
         vel_refresh_err[idim].setVal(0.0);
     }
 }
@@ -129,7 +130,8 @@ void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex
     // first regrid repopulates them inside vor2vel().
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        vel_refresh_err[idim].define(ba, dm, 1, 0);
+        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
+        vel_refresh_err[idim].define(ba_face, dm, n_comp, 0);
         vel_refresh_err[idim].setVal(0.0);
     }
 }
@@ -385,20 +387,106 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
 
 void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver, int step)
 {
+#ifdef AMREX_USE_MPI
+    {
+        // 1. Hash the BoxArray (Order-sensitive geometric hash)
+        const amrex::BoxArray& check_ba = state.getPres().boxArray();
+        long local_ba_hash = check_ba.size();
+        for (int i = 0; i < check_ba.size(); ++i) 
+        {
+            const amrex::Box& b = check_ba[i];
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+            {
+                local_ba_hash = local_ba_hash * 1000003L + b.smallEnd(d);
+                local_ba_hash = local_ba_hash * 1000003L + b.bigEnd(d);
+            }
+        }
+
+        // 2. Hash the DistributionMapping (Processor assignment hash)
+        const amrex::DistributionMapping& check_dm = state.getPres().DistributionMap();
+        auto pmap = check_dm.ProcessorMap();
+        long local_dm_hash = pmap.size();
+        for (int v : pmap) 
+        {
+            local_dm_hash = local_dm_hash * 1000003L + v;
+        }
+
+        // 3. Cross-rank reduction
+        long ba_hmin = local_ba_hash, ba_hmax = local_ba_hash;
+        long dm_hmin = local_dm_hash, dm_hmax = local_dm_hash;
+
+        amrex::ParallelDescriptor::ReduceLongMin(ba_hmin);
+        amrex::ParallelDescriptor::ReduceLongMax(ba_hmax);
+        amrex::ParallelDescriptor::ReduceLongMin(dm_hmin);
+        amrex::ParallelDescriptor::ReduceLongMax(dm_hmax);
+
+        // 4. Global synchronization verification
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(ba_hmin == ba_hmax, 
+            "CRITICAL: BoxArray desynchronization detected across ranks before ParallelCopy!");
+        
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(dm_hmin == dm_hmax, 
+            "CRITICAL: DistributionMapping desynchronization detected across ranks before ParallelCopy!");
+    }
+#endif
+
     // update flow field onto the new geom, ba, dm
     if (did_snug_domain_change)
     {
         // create new state with new geom, ba, dm
         FlowField new_state(geom, ba, dm, n_comp, n_ghost);
+        
+    #ifdef AMREX_USE_MPI
+        {
+            // 1. Hash the BoxArray (Order-sensitive geometric hash)
+            const amrex::BoxArray& check_ba = new_state.getPres().boxArray();
+            long local_ba_hash = check_ba.size();
+            for (int i = 0; i < check_ba.size(); ++i) 
+            {
+                const amrex::Box& b = check_ba[i];
+                for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+                {
+                    local_ba_hash = local_ba_hash * 1000003L + b.smallEnd(d);
+                    local_ba_hash = local_ba_hash * 1000003L + b.bigEnd(d);
+                }
+            }
 
+            // 2. Hash the DistributionMapping (Processor assignment hash)
+            const amrex::DistributionMapping& check_dm = new_state.getPres().DistributionMap();
+            auto pmap = check_dm.ProcessorMap();
+            long local_dm_hash = pmap.size();
+            for (int v : pmap) 
+            {
+                local_dm_hash = local_dm_hash * 1000003L + v;
+            }
+
+            // 3. Cross-rank reduction
+            long ba_hmin = local_ba_hash, ba_hmax = local_ba_hash;
+            long dm_hmin = local_dm_hash, dm_hmax = local_dm_hash;
+
+            amrex::ParallelDescriptor::ReduceLongMin(ba_hmin);
+            amrex::ParallelDescriptor::ReduceLongMax(ba_hmax);
+            amrex::ParallelDescriptor::ReduceLongMin(dm_hmin);
+            amrex::ParallelDescriptor::ReduceLongMax(dm_hmax);
+
+            // 4. Global synchronization verification
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(ba_hmin == ba_hmax, 
+                "CRITICAL: BoxArray desynchronization detected across ranks before ParallelCopy!");
+            
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(dm_hmin == dm_hmax, 
+                "CRITICAL: DistributionMapping desynchronization detected across ranks before ParallelCopy!");
+        }
+    #endif
+        
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(state.getPres().DistributionMap().size() == state.getPres().boxArray().size(),
+                "DistributionMapping was mutated underneath this MultiFab");
+        
+        int seq = amrex::ParallelDescriptor::SeqNum();
         amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
-                << " step " << step
-                << " | old state ba hash / size: " << state.getPres().boxArray().size()
-                << " | new ba size: " << ba.size()
-                << " | new_state local boxes: " << new_state.getPres().local_size()
-                << " | old state local boxes: " << state.getPres().local_size() << "\n";
+                    << " SeqNum at transplant: " << seq << "\n";
 
         // copy Dxsoln from old state into new state
+        amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " pre-pres-PC dim\n";
+        new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
         {
             amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " pre-vel-PC dim " << idim << "\n";
@@ -407,7 +495,7 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_
             new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
             amrex::AllPrint() << "rank " << ParallelDescriptor::MyProc() << " post-KE-PC dim " << idim << "\n";
         }
-        // new_state.getPres().ParallelCopy(state.getPres(), 0, 0, state.getPres().nComp(), 0, 0);
+        new_state.getPres().setVal(0.0);
         new_state.setBoundary();
 
         // local test to see if grow/rechunk actually affects the solver due to the
