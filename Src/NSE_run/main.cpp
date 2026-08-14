@@ -1,5 +1,7 @@
 #include <MyFunctions.H>
 
+// #define ENABLE_DEBUG_CHECKS
+
 using namespace amrex;
 
 int main(int argc, char* argv[])
@@ -181,31 +183,6 @@ void extendedMain()
                         AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
                                     << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
                                     << " | w-refresh err: " << dmgr.refresh_err_max_norm[2]) << "\n";
-
-        // // update domain based on results from timestep
-        // if (step % dmgr.computeRegridInterval(state_n) == 0)
-        // {
-        //     
-        //     dmgr.updateSnugDomain(state_n);
-        //     dmgr.regridFlowFieldOntoNewSnugDomain(state_n, workspace.lgf_poisson_solver);
-        //     workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
-        //     if (io_cfg.plot_post_regrid && step % io_cfg.plot_post_regrid_int == 0)
-        //     {
-        //         io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
-        //     }
-
-        //     // test to see if second tagging was the one being problematic
-        //     amrex::BoxArray supp_before = dmgr.getSuppBoxArr();   // copy before
-        //     dmgr.computeSuppBoxArr(state_n);
-        //     amrex::BoxArray supp_after = dmgr.getSuppBoxArr();    // copy after
-
-        //     // compare
-        //     bool same = (supp_before == supp_after);
-        //     amrex::Print() << "step " << step << " | 2nd-tag changed supp_ba: "
-        //                 << (same ? "NO" : "YES")
-        //                 << " | before=" << supp_before.size()
-        //                 << " after=" << supp_after.size() << "\n";
-        // }
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval
