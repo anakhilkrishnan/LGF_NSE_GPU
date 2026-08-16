@@ -195,7 +195,7 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     for (int d = 0; d < AMREX_SPACEDIM; ++d)
     {
         face_vels[d] = &state.getVel(d);
-        face_errs[d] = &dom_mgr.vel_refresh_err[d];
+        face_errs[d] = &dom_mgr.getVelRefreshErrComp(d);
     }
  
     // averages all dimensions simultaneously into plotFab starting at component 0
@@ -205,10 +205,10 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     plotFab_cc_full.ParallelCopy(state.getPres(), 0, (2 * AMREX_SPACEDIM), 1, 0, 0);
     plotFab_cc_full.ParallelCopy(tagRegion, 0, (2 * AMREX_SPACEDIM) + 1, 1, 0, 0);
     plotFab_cc_full.ParallelCopy(computePlotDivU(state), 0, (2 * AMREX_SPACEDIM) + 2, 1, 0, 0);
-    plotFab_cc_full.ParallelCopy(dom_mgr.divN, 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
-    plotFab_cc_full.ParallelCopy(dom_mgr.vort, 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(dom_mgr.getDivN(), 0, (2 * AMREX_SPACEDIM) + 3, 1, 0, 0);
+    plotFab_cc_full.ParallelCopy(dom_mgr.getVort(), 0, (2 * AMREX_SPACEDIM) + 4, 1, 0, 0);
  
-    plotFab_nd_full.ParallelCopy(dom_mgr.psi, 0, 0, ncomp_vort, 0, 0);
+    plotFab_nd_full.ParallelCopy(dom_mgr.getPsi(), 0, 0, ncomp_vort, 0, 0);
     plotFab_nd_full.ParallelCopy(computeNodalVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
  
     // choose the grid actually written: restricted support grid, or full ba.
@@ -289,7 +289,7 @@ void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspac
 
 void IOManager::initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
 {
-    std::string write_dir = cfg.plot_dir + "/" + cfg.kedata_prefix;
+    std::string write_dir = cfg.plot_dir + cfg.kedata_prefix;
  
     if (amrex::ParallelDescriptor::IOProcessor())
     {

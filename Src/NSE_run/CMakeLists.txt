@@ -6,7 +6,6 @@ add_executable(nserun
                 IOConfig.H
                 IOManager.H)
 
-# uncomment below line for gpu compilation
 # Use AMReX macro for cuda compilation using CMake                
 if(AMReX_GPU_BACKEND STREQUAL "CUDA")
     setup_target_for_cuda_compilation(nserun)
@@ -25,6 +24,12 @@ target_link_libraries(nserun PRIVATE NSE_core_lib)
 set_target_properties(nserun PROPERTIES 
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Exec/NSE_test"
 )
+
+option(ENABLE_DEBUG_CHECKS "Cross-rank BoxArray/DistributionMapping consistency asserts" OFF)
+
+if (ENABLE_DEBUG_CHECKS)
+    target_compile_definitions(nserun PRIVATE ENABLE_DEBUG_CHECKS)
+endif()
 
 # Update the input file
 add_custom_command(TARGET nserun POST_BUILD

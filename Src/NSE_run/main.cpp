@@ -1,7 +1,5 @@
 #include <MyFunctions.H>
 
-// #define ENABLE_DEBUG_CHECKS
-
 using namespace amrex;
 
 int main(int argc, char* argv[])
@@ -158,20 +156,20 @@ void extendedMain()
 
         dmgr.checkAndUpdateSnugDomain(state_n);
         
-        dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step);
-
         if (dmgr.did_snug_domain_change)
         {
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
+        dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step);
+
         // plot diagnostics
-        if (dmgr.did_snug_domain_change || io_cfg.plot_post_regrid && step % io_cfg.plot_post_regrid_int == 0)
+        if (io_cfg.plot_post_regrid && (dmgr.did_snug_domain_change || step % io_cfg.plot_post_regrid_int == 0))
         {
             io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
         }
 
-        // refresh flag 
+        // refresh flag after all dependent processes are complete
         dmgr.did_snug_domain_change = false;
 
         // solver time and output

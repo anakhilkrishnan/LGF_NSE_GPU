@@ -31,11 +31,18 @@ class DomainManager
         amrex::BoxArray ba;
         amrex::BoxArray supp_ba;
         amrex::DistributionMapping dm;
+
+        // tagging fields
+        amrex::MultiFab vort;
+        amrex::MultiFab divN;
         
         // scratch variables
         amrex::BoxArray old_supp_ba;
         amrex::Gpu::DeviceVector<int> supp_tag_arr;
         amrex::Vector<int>h_tag_arr;
+
+        amrex::MultiFab psi;        
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel_refresh_err; // checks if the velocity refresh is working
 
         // inputs needed from Solver config
         int regrid_int;
@@ -50,12 +57,9 @@ class DomainManager
         int computeRegridInterval(const FlowField& state) const;
 
     public:
-        // scratch type variables
+        
+        // public scratch variables
         bool did_snug_domain_change;
-        amrex::MultiFab psi;
-        amrex::MultiFab vort;
-        amrex::MultiFab divN;
-        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel_refresh_err; // checks if the velocity refresh is working
         amrex::Array<amrex::Real, AMREX_SPACEDIM> refresh_err_max_norm;
 
         // getter functions
@@ -63,10 +67,15 @@ class DomainManager
         amrex::BoxArray getSuppBoxArr() const { return supp_ba; }
         amrex::DistributionMapping getDistMap() const { return dm; }
         amrex::Geometry getGeom() const { return geom; }
-        bool didSnugDomainChange() const { return did_snug_domain_change; }
+
+        const amrex::MultiFab& getVort() const { return vort; }
+        const amrex::MultiFab& getPsi() const { return psi; }
+        const amrex::MultiFab& getDivN() const { return divN; }
+        const amrex::MultiFab& getVelRefreshErrComp(int idim) const { return vel_refresh_err[idim]; }
 
         // primary functionality
         DomainManager(const SolverConfig& config);
+        void defineScratch();
         void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain();
         void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);

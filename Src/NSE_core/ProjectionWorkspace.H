@@ -77,7 +77,7 @@ class ProjectionWorkspace
 
         amrex::Real computeDt(const FlowField& state_n) const;
         amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr) const;
-        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& tag_ba);
+        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 

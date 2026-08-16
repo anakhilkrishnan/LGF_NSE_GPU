@@ -16,7 +16,6 @@ struct SolverConfig
     int search_to_fine_ref_ratio;
     int n_cell_search;
     int max_grid_size_search;
-    int max_grid_size_tagging;
     int n_ghost;
     int n_comp = 1;
     int regrid_int = 5;
@@ -45,7 +44,6 @@ struct SolverConfig
         pp.get("max_grid_size", max_grid_size);
 
         pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
-        pp.get("max_grid_size_tagging", max_grid_size_tagging);
         pp.get("n_ghost", n_ghost);
         pp.query("n_comp", n_comp);
         pp.query("regrid_int", regrid_int);

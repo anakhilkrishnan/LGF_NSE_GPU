@@ -42,7 +42,29 @@ DomainManager::DomainManager(const SolverConfig& config)
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 
     // initialization of other members
+    defineScratch();
+
     did_snug_domain_change = false;
+    refresh_err_max_norm.fill(0.0);
+
+    // no snug behaviour by default: whole domain is the support
+    supp_ba     = ba;
+    old_supp_ba = ba;
+}
+
+void DomainManager::defineScratch()
+{
+    vort.define(ba, dm, 1, n_ghost);
+    divN.define(ba, dm, 1, n_ghost);
+    vort.setVal(0.0); 
+    divN.setVal(0.0);
+    psi.define(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, 1, n_ghost);
+    psi.setVal(0.0);
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
+        vel_refresh_err[idim].define(ba_face, dm, 1, 0);
+        vel_refresh_err[idim].setVal(0.0);
+    }
 }
 
 void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_grid_size_req)
@@ -100,22 +122,17 @@ void DomainManager::initializeSnugDomain()
 
     computeSuppBoxArr(search_state, false); // can't shed outer layer as it has never been tagged before
 
-    amrex::BoxArray xsoln_ba = supp_ba;
-    
     // refine to desired resolution
-    xsoln_ba.refine(search_to_fine_ref_ratio);
+    supp_ba.refine(search_to_fine_ref_ratio);
+    old_supp_ba = supp_ba;
 
     // pad with buffer and update
+    amrex::BoxArray xsoln_ba = supp_ba;
     growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size);
     updateGeomBaDm(xsoln_ba);
 
-    // initialize error multifab to zero
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
-    {
-        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
-        vel_refresh_err[idim].define(ba_face, dm, n_comp, 0);
-        vel_refresh_err[idim].setVal(0.0);
-    }
+    // redefine scratch variables onto new grid
+    defineScratch();
 }
 
 void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba)
@@ -128,14 +145,8 @@ void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex
     updateGeomBaDm(chk_ba);
     supp_ba = chk_supp_ba;
 
-    // size the velocity-refresh diagnostic arrays so plotting is safe before the
-    // first regrid repopulates them inside vor2vel().
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
-        vel_refresh_err[idim].define(ba_face, dm, n_comp, 0);
-        vel_refresh_err[idim].setVal(0.0);
-    }
+    // redefine scratch variables onto new grid
+    defineScratch();
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 
@@ -461,9 +472,6 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_
         }
         new_state.getPres().setVal(0.0);
         new_state.setBoundary();
-
-        // update the Poisson solver
-        lgf_nodal_poisson_solver.regridOnto(geom, ba, dm);   
 
         // move new_state back into state to continue
         state = std::move(new_state);

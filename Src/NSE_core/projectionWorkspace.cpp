@@ -555,4 +555,7 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
     pres_corr.setVal(0.0);
     divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
     divU.setVal(0.0);
+
+    // update the Poisson solver
+    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);  
 }
