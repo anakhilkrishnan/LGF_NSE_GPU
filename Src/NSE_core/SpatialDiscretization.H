@@ -8,6 +8,10 @@
 
 using namespace amrex;
 
+// set of discrete operators used in S.Liska and T.Colonius' paper, "A fast
+// lattice Green's function method for solving viscous incompressible flows on
+// unbounded domains"
+
 // gradient computation for a scalar field
 // returns the scalar for template <dim> dimension
 // written with cell-centered to face-centered transform in mind
