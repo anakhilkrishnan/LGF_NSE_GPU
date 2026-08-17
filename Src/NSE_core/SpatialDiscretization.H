@@ -14,7 +14,7 @@ using namespace amrex;
 
 // gradient computation for a scalar field
 // returns the scalar for template <dim> dimension
-// written with cell-centered to face-centered transform in mind
+// written for cell-centered input, face-centered output
 template <int dim>
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real discreteGradientC2F(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, amrex::Array4<amrex::Real const> const& phi)
@@ -40,7 +40,7 @@ amrex::Real discreteGradientC2F(int i, int j, int k, amrex::GpuArray<amrex::Real
 
 // divergence computations for a vector field with 2/3 components
 // returns a scalar
-// written with face-centered to cell-centered transform in mind
+// written for face-centered input, cell-centered output
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE 
 amrex::Real discreteDivergenceF2C(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vec)
 {
@@ -62,7 +62,7 @@ amrex::Real discreteDivergenceF2C(int i, int j, int k, amrex::GpuArray<amrex::Re
 
 // curl computations for a vector field with 2/3 components
 // returns the scalar corresponding to template <dim> dimension
-// written with face-centered to edge-centered transform in mind
+// written for face-centered input, edge-centered output
 template <int dim>
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real discreteCurlF2E(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vec)
@@ -100,7 +100,7 @@ amrex::Real discreteCurlF2E(int i, int j, int k, amrex::GpuArray<amrex::Real, AM
 
 // laplacian computations for a scalar field
 // returns scalar value
-// written with in-place return in mind
+// written for in-place return
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real discreteLaplacian(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx2, amrex::Array4<amrex::Real const> const& phi)
 {

@@ -295,22 +295,25 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
     // tag on current flow field
     computeSuppBoxArr(state);
 
-    if (old_supp_ba == supp_ba)
+    // checks if region is still same, weaker check than == because ordering and
+    // indices are irrelevent to the solver; guarded against case if either is 
+    // zero
+
+    const bool same_region =
+    (old_supp_ba.size() == 0 || supp_ba.size() == 0)
+    ? (old_supp_ba.size() == supp_ba.size())
+    : (old_supp_ba.contains(supp_ba) && supp_ba.contains(old_supp_ba));
+
+    amrex::Print() << "  [diag] nbox " << old_supp_ba.size() << " -> " << supp_ba.size()
+                << " | same region? " << same_region << "\n";
+
+    if (same_region)
     {
         // set refresh flag to false and exit
         did_snug_domain_change = false;
     }
     else
     {   
-        // checks if region is still same, possibly weaker check than ==
-        const bool same_region =
-        (old_supp_ba.size() == 0 || supp_ba.size() == 0)
-        ? (old_supp_ba.size() == supp_ba.size())
-        : (old_supp_ba.contains(supp_ba) && supp_ba.contains(old_supp_ba));
-
-        amrex::Print() << "  [diag] nbox " << old_supp_ba.size() << " -> " << supp_ba.size()
-                    << " | same region? " << same_region << "\n";
-
         // set refresh flag to true
         did_snug_domain_change = true;
 
