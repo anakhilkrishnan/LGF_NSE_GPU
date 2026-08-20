@@ -21,7 +21,6 @@ class FlowField
         amrex::Geometry globalgeom;
         
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel;
-        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp;
         amrex::MultiFab pres;
 
     public:
@@ -40,8 +39,6 @@ class FlowField
         const amrex::Geometry& getGeom() const { return globalgeom; }
         amrex::MultiFab& getVel(int idim) { return vel[idim]; }
         const amrex::MultiFab& getVel(int idim) const { return vel[idim]; }
-        amrex::MultiFab& getKEComp(int idim) { return kecomp[idim]; }
-        const amrex::MultiFab& getKEComp(int idim) const { return kecomp[idim]; }
         amrex::MultiFab& getPres() { return pres; }
         const amrex::MultiFab& getPres() const { return pres; }
 

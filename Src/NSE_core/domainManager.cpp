@@ -471,7 +471,6 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
         {
             new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
-            new_state.getKEComp(idim).ParallelCopy(state.getKEComp(idim), 0, 0, state.getKEComp(idim).nComp(), 0, 0);
         }
         new_state.getPres().setVal(0.0);
         new_state.setBoundary();
