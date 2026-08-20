@@ -9,11 +9,9 @@ FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, con
 
         // declare the specific velocity component
         vel[idim].define(ba_face, dm, n_comp, n_ghost);
-        kecomp[idim].define(ba_face, dm, n_comp, n_ghost);
 
         // initialize velocities upon creation
         vel[idim].setVal(0.0);
-        kecomp[idim].setVal(0.0);
     }
 
     // initialize pressure upon creation
@@ -31,14 +29,8 @@ FlowField::FlowField(const FlowField& other)
                          other.vel[idim].DistributionMap(), 
                          other.vel[idim].nComp(), 
                          other.vel[idim].nGrow());
-        
-        kecomp[idim].define(other.kecomp[idim].boxArray(), 
-                         other.kecomp[idim].DistributionMap(), 
-                         other.kecomp[idim].nComp(), 
-                         other.kecomp[idim].nGrow());
 
         amrex::MultiFab::Copy(vel[idim], other.vel[idim], 0, 0, vel[idim].nComp(), vel[idim].nGrow());
-        amrex::MultiFab::Copy(kecomp[idim], other.kecomp[idim], 0, 0, kecomp[idim].nComp(), kecomp[idim].nGrow());
     }
 
     pres.define(other.pres.boxArray(), other. pres.DistributionMap(), other.pres.nComp(), other.pres.nGrow());
@@ -53,7 +45,6 @@ FlowField& FlowField::operator=(const FlowField& other)
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
         {
             amrex::MultiFab::Copy(vel[idim], other.vel[idim], 0, 0, vel[idim].nComp(), vel[idim].nGrow());
-            amrex::MultiFab::Copy(kecomp[idim], other.kecomp[idim], 0, 0, kecomp[idim].nComp(), kecomp[idim].nGrow());
         }
         
         amrex::MultiFab::Copy(pres, other.pres, 0, 0, pres.nComp(), pres.nGrow());
@@ -69,7 +60,6 @@ void FlowField::setBoundary()
     {
         // update ghost cells
         vel[idim].FillBoundary(globalgeom.periodicity());
-        kecomp[idim].FillBoundary(globalgeom.periodicity());
     }
 
     // update pressure fields
@@ -85,10 +75,8 @@ void FlowField::redefine(const amrex::Geometry& new_geom, const amrex::BoxArray&
     {
         amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
         vel[idim].define(new_ba_face, new_dm, vel[idim].nComp(), vel[idim].nGrow());
-        kecomp[idim].define(new_ba_face, new_dm, kecomp[idim].nComp(), kecomp[idim].nGrow());
 
         vel[idim].setVal(0.0);
-        kecomp[idim].setVal(0.0);
     }
     pres.define(new_ba, new_dm, pres.nComp(), pres.nGrow());
     pres.setVal(0.0);
@@ -168,7 +156,7 @@ amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
         
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            divN_arr(i,j,k) = divMorinishiConvective(i,j,k, invdx, vel);
+            divN_arr(i,j,k) = divNonLinearTerm(i,j,k, invdx, vel);
         });
     }
     

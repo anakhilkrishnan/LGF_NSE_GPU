@@ -5,7 +5,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
 {
     // initializing required solver parameters
     n_lookup = config.n_lookup;
-    rk_order = config.rk_order;
+    rk_stages = config.rk_stages;
     invRe = config.invRe;
     cfl = config.cfl;
 
@@ -22,20 +22,9 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
         rhs_vel[idim].define(ba_face, dm_in, n_comp, n_ghost);
         rhs_vel_corr[idim].define(ba_face, dm_in, n_comp, n_ghost);
 
-        rhs_kecomp[idim].define(ba_face, dm_in, n_comp, n_ghost);
-        kecomp_dir[idim].define(ba_face, dm_in, n_comp, n_ghost);
-
         // initialize velocities upon creation
         rhs_vel[idim].setVal(0.0);
         rhs_vel_corr[idim].setVal(0.0);
-
-        rhs_kecomp[idim].setVal(0.0);
-        kecomp_dir[idim].setVal(0.0);
-
-        // initialize global ke component storage variables
-        global_kecomp[idim] = 0.0;
-        global_kecomp_dir[idim] = 0.0;
-        global_kecomp_err[idim] = 0.0;
     }
 
     // initialize pres_corr upon creation
@@ -180,143 +169,6 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
     // write out divU_at_end_max_norm
     divU_at_end_max_norm = computeDivUMaxNorm(init_state);
     divU_at_end_max_norm_support = computeDivUMaxNorm(init_state, &init_supp_ba);
-}
-
-void ProjectionWorkspace::computeKECompFluxes(const FlowField& input_state)
-{
-    BL_PROFILE("<Compute> advanceTimeStep(): computeKEFluxes()");
-    // compute the right hand side of the KE evolution equations along x,y,z
-    // at the given input_state discretized using a second order finite difference
-    // KEP scheme as outlined in Morinish et. al.
-
-    // function's copy of Re to be passed to GPU lambdas
-    amrex::Real invRe_temp = invRe;
-    
-    // extracting physical dx for computations
-    const amrex::Geometry& geom = input_state.getGeom();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2;
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-    {
-        invdx2[d] = invdx[d] * invdx[d];
-    }
-
-    // for each velocity direction, rhs is computed accordingly
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        for (amrex::MFIter mfi(rhs_kecomp[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-        {
-            const amrex::Box& bx = mfi.tilebox();
-
-            // .........................KEFlux directly from MomentumFlux....................................
-            // auto const& rhs_ke_arr  = rhs_kecomp[idim].array(mfi);
-            // auto const& rhs_vel_arr = rhs_vel[idim].const_array(mfi);
-            // auto const& vel_arr     = input_state.getVel(idim).const_array(mfi);
-
-            // amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            // {
-            //     // directly compute the kinetic energy fluxes from the momentum equation 
-            //     rhs_ke_arr(i,j,k) = vel_arr(i,j,k) * rhs_vel_arr(i,j,k);
-            // });
-            // .....................................END.......................................................
-            // .........................Separate KEFlux Kernel Compute .......................................
-            amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr;
-            amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> kecomp_arr;
-            for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-            {
-                vel_arr[d] = input_state.getVel(d).const_array(mfi);
-                kecomp_arr[d] = input_state.getKEComp(d).const_array(mfi);
-            }
-            auto const& pres_arr = input_state.getPres().const_array(mfi);
-            auto const& rhs_ke_arr  = rhs_kecomp[idim].array(mfi);
-
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                // evaluating one at a time for template variable idim, because
-                // these happen at compile time
-                if (idim == 0) 
-                {
-                    rhs_ke_arr(i,j,k) = morinishiKEFlux<0>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
-                }
-            #if AMREX_SPACEDIM >= 2
-                else if (idim == 1) 
-                {
-                    rhs_ke_arr(i,j,k) = morinishiKEFlux<1>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
-                }
-            #endif
-            #if AMREX_SPACEDIM == 3
-                else if (idim == 2) 
-                {
-                    rhs_ke_arr(i,j,k) = morinishiKEFlux<2>(i, j, k, invRe_temp, invdx, invdx2, vel_arr, kecomp_arr, pres_arr);
-                }
-            #endif
-            });
-            // ............................................END.................................................
-        }
-    }
-}
-
-void ProjectionWorkspace::evolveKE(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma)
-{
-    BL_PROFILE("<Compute> advanceTimeStep(): evolveKE()");
-    // use the right hand side to compute the next stage kinetic energy
-
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        // using amrex's linalg functions for this step; not updating any ghost
-        // cell data here, those are updated by BCs
-        amrex::MultiFab::LinComb(stage.getKEComp(idim), alpha, state_n.getKEComp(idim), 0, beta, stage.getKEComp(idim), 0, 0, stage.getKEComp(idim).nComp(), 0);
-        amrex::Real dt_by_gam = dt / gamma;
-        amrex::MultiFab::Saxpy(stage.getKEComp(idim), dt_by_gam, rhs_kecomp[idim], 0, 0, stage.getKEComp(idim).nComp(), 0);
-    }
-}
-
-void ProjectionWorkspace::computeKEFromState(const FlowField& state)
-{
-    BL_PROFILE("computeKEFromState()");
-    // compute face-centered component-wise KE from velocity field in state
-
-    // computing kecomp_dir one component at a time
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        // capture the idim'th velocity component
-        const amrex::MultiFab& vel_comp = state.getVel(idim);
-
-        // initializing to zero to clear garbage values out
-        kecomp_dir[idim].setVal(0.0);
-
-        for (amrex::MFIter mfi(kecomp_dir[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-        {
-            const amrex::Box& bx = mfi.tilebox();
-
-            auto const& ke_arr = kecomp_dir[idim].array(mfi);
-            auto const& vel_arr = vel_comp.const_array(mfi);
-
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                ke_arr(i,j,k) = 0.5 * (vel_arr(i,j,k) * vel_arr(i,j,k));
-            });
-        }
-    }
-}
-
-void ProjectionWorkspace::compareKE(const FlowField& state_n)
-{
-    BL_PROFILE("<Compute> advanceTimeStep(): compareKE()");
-    // compute KE components directly from velocity fields; global reduce both
-    // KE and KEdir into component-wise sums and compare/writeout/print
-
-    computeKEFromState(state_n);
-
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        // summing up across all MPI ranks
-        global_kecomp[idim] = state_n.getKEComp(idim).sum(0, false);
-        global_kecomp_dir[idim] = kecomp_dir[idim].sum(0, false);
-
-        // computing and storing error
-        global_kecomp_err[idim] = global_kecomp_dir[idim] - global_kecomp[idim];
-    }
 }
 
 void ProjectionWorkspace::computeMomentumFluxes(const FlowField& input_state)
@@ -489,21 +341,14 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     tag_ba = supp_ba;
 
     stage = state_n;
-    amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_order);
+    amrex::Vector<RKCoeffs> coeffs = getRKCoeffs(rk_stages);
 
-    for(int k = 0; k < rk_order; ++k)
+    for(int k = 0; k < rk_stages; ++k)
     {
         // extracting RK coefficients
         amrex::Real alpha = coeffs[k].alp;
         amrex::Real beta = coeffs[k].bet;
         amrex::Real gamma = coeffs[k].gam;
-
-        // performing KE evolution routine
-        // compute and store KE fluxes in workspace
-        computeKECompFluxes(stage);
-
-        // evolve KE and store back in stage
-        evolveKE(state_n, alpha, beta, gamma);
 
         // compute and store fluxes in workspace
         computeMomentumFluxes(stage);
@@ -541,13 +386,9 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
         
         rhs_vel[idim].define(new_ba_face, new_dm, rhs_vel[idim].nComp(), rhs_vel[idim].nGrow());
         rhs_vel_corr[idim].define(new_ba_face, new_dm, rhs_vel_corr[idim].nComp(), rhs_vel_corr[idim].nGrow());
-        rhs_kecomp[idim].define(new_ba_face, new_dm, rhs_kecomp[idim].nComp(), rhs_kecomp[idim].nGrow());
-        kecomp_dir[idim].define(new_ba_face, new_dm, kecomp_dir[idim].nComp(), kecomp_dir[idim].nGrow());
 
         rhs_vel[idim].setVal(0.0);
         rhs_vel_corr[idim].setVal(0.0);
-        rhs_kecomp[idim].setVal(0.0);
-        kecomp_dir[idim].setVal(0.0);
     }
 
     // reallocate cell-centered arrays

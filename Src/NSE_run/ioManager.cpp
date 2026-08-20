@@ -5,8 +5,6 @@ IOManager::IOManager(const IOConfig& config) : cfg(config)
     better_dir = "";
 }
 
-// PENDING: Write Chk and Plt data for KE as well!!
-
 void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba)
 {
     // PENDING: Modify to write checkpoints for AMR data
@@ -264,51 +262,5 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 
-void IOManager::writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
-{   
-    std::string write_dir = cfg.plot_dir + cfg.kedata_prefix;
 
-    if (amrex::ParallelDescriptor::IOProcessor())
-    {
-        std::ofstream ofs(write_dir, std::ios::out | std::ios::app);
-        ofs.precision(17);
- 
-        ofs << step << "\t" << time;
- 
-        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-        {
-            ofs << "\t" << workspace.global_kecomp_dir[idim]
-                << "\t" << workspace.global_kecomp[idim]
-                << "\t" << workspace.global_kecomp_err[idim];
-        }
- 
-        ofs << "\n";
-        ofs.close();
-    }
-}
 
-void IOManager::initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace)
-{
-    std::string write_dir = cfg.plot_dir + cfg.kedata_prefix;
- 
-    if (amrex::ParallelDescriptor::IOProcessor())
-    {
-        amrex::UtilCreateDirectory(cfg.plot_dir, 0755);
- 
-        std::ofstream ofs(write_dir, std::ios::out | std::ios::trunc);
- 
-        ofs << "Step\tTime";
- 
-        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-        {
-            ofs << "\ttotalKE_dir_comp" << idim
-                << "\ttotalKE_evol_comp" << idim
-                << "\ttotalKE_err_comp" << idim;
-        }
- 
-        ofs << "\n";
-        ofs.close();
-    }
- 
-    amrex::ParallelDescriptor::Barrier();
-}

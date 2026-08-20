@@ -84,13 +84,6 @@ void extendedMain()
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
     }
 
-    // populating KE comp arrays
-    workspace.computeKEFromState(state_n);
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        amrex::MultiFab::Copy(state_n.getKEComp(idim), workspace.kecomp_dir[idim], 0, 0, state_n.getKEComp(idim).nComp(), 0);
-    }
-
     // fill ghost cells and apply physical BCs
     state_n.setBoundary();
     
@@ -100,13 +93,6 @@ void extendedMain()
         BL_PROFILE("<IO> Initial Plot()");
         io.writeMyPlotFile(0, io_cfg.plot_only_support, step, time, state_n, dmgr);
 
-    }
-
-    // logging initial kinetic energy data
-    if (!io_cfg.start_from_chk && io_cfg.write_kedata)
-    {
-        // initialize kinetic_energy.dat
-        io.initializeWriteKEData(step, time, workspace);
     }
 
     // switch for main and alt chk files
@@ -124,13 +110,6 @@ void extendedMain()
     while(time < sol_cfg.t_stop && step < sol_cfg.max_steps)
     {
         auto step_start_time = amrex::second();
-
-        // perform KEP check and write data
-        if (step %io_cfg.kedata_int == 0 &&io_cfg.write_kedata)
-        {
-            workspace.compareKE(state_n);
-            io.writeKEData(step, time, workspace);
-        }
 
         // always call computeDt() right before advanceTimeStep()
         dt_master = workspace.computeDt(state_n);
@@ -201,10 +180,6 @@ void extendedMain()
                         << " | divU_max: " << workspace.divU_at_end_max_norm
                         << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
     }
-
-    // perform KEP check and write data for the last time
-    workspace.compareKE(state_n);
-    io.writeKEData(step, time, workspace);
 
     // overall code walltime tracking
     auto overall_end_time = amrex::second();

@@ -14,13 +14,11 @@ struct IOConfig
     bool write_chk = true;
     bool write_log = true;
     bool start_from_chk = false;
-    bool write_kedata = true;
 
     int plot_int = 100;
     int plot_post_regrid_int = 10;
     int chk_int = 20;
     int log_int = 1;
-    int kedata_int = 1;
 
     std::string plot_dir = "./Results";
     std::string chk_dir = "./Checkpoints/main";
@@ -30,7 +28,6 @@ struct IOConfig
     std::string plot_prefix = "/plt";
     std::string chk_prefix = "/chk";
     std::string log_prefix = "/log.txt";
-    std::string kedata_prefix = "/kinetic_energy.dat";
 
     void readInputs()
     {
@@ -56,10 +53,6 @@ struct IOConfig
         pp.query("log_int", log_int);
         pp.query("log_dir", log_dir);
         pp.query("log_prefix", log_prefix);
-
-        pp.query("write_kedata", write_kedata);
-        pp.query("kedata_int", kedata_int);
-        pp.query("kedata_prefix", kedata_prefix);
     }
 };
 

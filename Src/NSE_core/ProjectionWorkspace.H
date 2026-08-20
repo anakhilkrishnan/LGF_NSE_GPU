@@ -24,7 +24,7 @@ class ProjectionWorkspace
         // variables that are initialized in constructor call and live 
         // throughout solver life cycle
         int n_lookup;
-        int rk_order;
+        int rk_stages;
         amrex::Real cfl;
 
         amrex::Real dt;
@@ -39,34 +39,21 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
         amrex::MultiFab pres_corr;
 
-        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_kecomp;
-
     public: 
 
         // public, so it can be passed to DomainManager when field needs to be updated
         DirectSumLGF lgf_poisson_solver;
-
-        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> kecomp_dir;
 
         amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
 
         amrex::Real divU_max_norm;
         amrex::Real divU_at_end_max_norm;
         amrex::Real divU_at_end_max_norm_support;
-        amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp;
-        amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_dir;
-        amrex::Array<amrex::Real, AMREX_SPACEDIM> global_kecomp_err;
 
         ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config);
 
         // functions for initialization
         void initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba);
-
-        // functions for KE computations
-        void computeKECompFluxes(const FlowField& input_state);
-        void evolveKE(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
-        void computeKEFromState(const FlowField& state);
-        void compareKE(const FlowField& state_n);
 
         // functions for flow field computations
         void computeMomentumFluxes(const FlowField& input_state);

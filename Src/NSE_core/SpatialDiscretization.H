@@ -116,6 +116,82 @@ amrex::Real discreteLaplacian(int i, int j, int k, amrex::GpuArray<amrex::Real, 
     return laplacian;
 }
 
+// convective term (vort cross vel, without 1/2|u|^2) computations for vector
+// velocity 
+// returns scalar corresponding to template <dim> dimension 
+// written for in-place return
+template <int dim>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                            amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr)
+{
+    // extract velocities from vel_arr
+    auto const& u = vel_arr[0];
+    auto const& v = vel_arr[1];
+#if AMREX_SPACEDIM == 3
+    auto const& w = vel_arr[2];
+#endif
+    // notation: w1, w2, w3 are components of vorticity, not to be confused with w (z-velocity)
+    // notation: u1, u2, u3 are components of velocity, not to be confused with u (x-velocity)
+    // above only used for variable naming; formula use u,v,w and the discreteCurl() function
+    if constexpr (dim == 0)
+    {
+        amrex::Real w3u2 = 0.25 * ( (discreteCurlF2E<2>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i-1, j+1, k))) 
+                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i-1, j, k))) );
+#if AMREX_SPACEDIM == 3
+        amrex::Real w2u3 = 0.25 * ( (discreteCurlF2E<1>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i-1, j, k+1))) 
+                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i-1, j, k))) );
+        return (w2u3 - w3u2);
+#else 
+        return (-w3u2);
+#endif
+    }
+    else if constexpr (dim == 1)
+    {
+        amrex::Real w3u1 = 0.25 * ( (discreteCurlF2E<2>(i+1, j, k, invdx, vel_arr) * (u(i+1, j, k) + u(i+1, j-1, k)))
+                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (u(i, j, k) + u(i, j-1, k))) );
+#if AMREX_SPACEDIM == 3
+        amrex::Real w1u3 = 0.25 * ( (discreteCurlF2E<0>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i, j-1, k+1)))
+                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i, j-1, k))) );
+
+
+        return (w3u1 - w1u3);
+#else 
+        return (w3u1);
+#endif
+    }
+#if AMREX_SPACEDIM == 3
+    else if constexpr (dim == 2)
+    {
+        amrex::Real w1u2 = 0.25 * ( (discreteCurlF2E<0>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i, j+1, k-1)))
+                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i, j, k-1))) );
+        amrex::Real w2u1 = 0.25 * ( (discreteCurlF2E<1>(i+1, j, k, invdx, vel_arr) * (u(i+1 ,j, k) + u(i+1, j, k-1)))
+                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (u(i, j,k) + u(i, j,k-1))) );
+        return (w1u2 - w2u1);
+
+    }
+#endif
+    else
+    {
+        // this should never be reached
+        return 0.0;
+    }
+}
+
+// single call function for divergence of nonLinearTerm
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+amrex::Real divNonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr)
+{
+    amrex::Real div = ((nonLinearTerm<0>(i+1,j,k, invdx, vel_arr) - nonLinearTerm<0>(i,j,k, invdx, vel_arr)) * invdx[0]
+                        + (nonLinearTerm<1>(i,j+1,k, invdx, vel_arr) - nonLinearTerm<1>(i,j,k, invdx, vel_arr)) * invdx[1]);
+#if AMREX_SPACEDIM == 3
+    div += (nonLinearTerm<2>(i,j,k+1, invdx, vel_arr) - nonLinearTerm<2>(i,j,k, invdx, vel_arr)) * invdx[2];
+#endif 
+
+    return div;
+}
+
 // Morinishi convective term computations for vector velocity and scalar pressure fields
 // returns scalar corresponding to template <dim> dimension
 // written with face-centered veclocity/ cell-centered pressure and face-centered return in mind
@@ -235,141 +311,6 @@ amrex::Real morinishiConvective(int i, int j, int k, amrex::GpuArray<amrex::Real
     }
 }
 
-template <int dim>
-AMREX_GPU_DEVICE AMREX_FORCE_INLINE
-amrex::Real morinishiKEConvective(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, 
-                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr,
-                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> kecomp)
-{
-    // extract velocities and kinetic energy components from vel and kecomp
-    auto const& u = vel_arr[0];
-    auto const& ke_u = kecomp[0];
-    auto const& v = vel_arr[1];
-    auto const& ke_v = kecomp[1];
-#if AMREX_SPACEDIM == 3
-    auto const& w = vel_arr[2];
-    auto const& ke_w = kecomp[2];
-#endif
-
-    amrex::Real convterm = 0.0;
-    // computing the convective term with the following references
-    // considering a box around the point of stored data
-    // F/B -> +- z-direction
-    // N/S -> +- y-direction
-    // E/W -> +- x-direction
-
-    // expressions correspond to the "divergence" form of the ke_i
-    // convective term; which corresponds to the skew form of the 
-    // momentum convection term in Morinishi et. al.
-
-    if constexpr (dim == 0)
-    {
-        // evaluating the advecting velocity
-        amrex::Real u_E = 0.5 * (u(i+1,j,k) + u(i,j,k));
-        amrex::Real u_W = 0.5 * (u(i,j,k) + u(i-1,j,k));
-
-        // evaluating KE
-        amrex::Real ke_u_E = 0.5 * (u(i+1,j,k) * u(i,j,k));
-        amrex::Real ke_u_W = 0.5 * (u(i,j,k) * u(i-1,j,k));
-
-        amrex::Real conv_x = (u_E * ke_u_E - u_W * ke_u_W) * invdx[0];
-        convterm = conv_x;
-
-        amrex::Real v_N = 0.5 * (v(i,j+1,k) + v(i-1,j+1,k));
-        amrex::Real v_S = 0.5 * (v(i,j,k) + v(i-1,j,k));
-
-        amrex::Real ke_u_N = 0.5 * (u(i,j+1,k) * u(i,j,k));
-        amrex::Real ke_u_S = 0.5 * (u(i,j,k) * u(i,j-1,k));
-
-        amrex::Real conv_y = (v_N * ke_u_N - v_S * ke_u_S) * invdx[1];
-        convterm += conv_y;
-    
-    #if AMREX_SPACEDIM == 3
-        amrex::Real w_F = 0.5 * (w(i,j,k+1) + w(i-1,j,k+1));
-        amrex::Real w_B = 0.5 * (w(i,j,k) + w(i-1,j,k));
-
-        amrex::Real ke_u_F = 0.5 * (u(i,j,k+1) * u(i,j,k));
-        amrex::Real ke_u_B = 0.5 * (u(i,j,k) * u(i,j,k-1));
-
-        amrex::Real conv_z = (w_F * ke_u_F - w_B * ke_u_B) * invdx[2];
-        convterm += conv_z;
-    #endif
-        
-        return convterm;
-    }
-    else if constexpr (dim == 1)
-    {
-        amrex::Real u_E = 0.5 * (u(i+1,j,k) + u(i+1,j-1,k));
-        amrex::Real u_W = 0.5 * (u(i,j,k) + u(i,j-1,k));
-        
-        amrex::Real ke_v_E = 0.5 * (v(i+1,j,k) * v(i,j,k));
-        amrex::Real ke_v_W = 0.5 * (v(i,j,k) * v(i-1,j,k));
-
-        amrex::Real conv_x = (u_E * ke_v_E - u_W * ke_v_W) * invdx[0];
-        convterm = conv_x;
-
-        amrex::Real v_N = 0.5 * (v(i,j+1,k) + v(i,j,k));
-        amrex::Real v_S = 0.5 * (v(i,j,k) + v(i,j-1,k));
-
-        amrex::Real ke_v_N = 0.5 * (v(i,j+1,k) * v(i,j,k));
-        amrex::Real ke_v_S = 0.5 * (v(i,j,k) * v(i,j-1,k));
-
-        amrex::Real conv_y = (v_N * ke_v_N - v_S * ke_v_S) * invdx[1];
-        convterm += conv_y;
-        
-    #if AMREX_SPACEDIM == 3
-        amrex::Real w_F = 0.5 * (w(i,j,k+1) + w(i,j-1,k+1));
-        amrex::Real w_B = 0.5 * (w(i,j,k) + w(i,j-1,k));
-
-        amrex::Real ke_v_F = 0.5 * (v(i,j,k+1) * v(i,j,k));
-        amrex::Real ke_v_B = 0.5 * (v(i,j,k) * v(i,j,k-1));
-
-        amrex::Real conv_z = (w_F * ke_v_F - w_B * ke_v_B) * invdx[2];
-        convterm += conv_z;
-    #endif
-        
-        return convterm;
-    }
-#if AMREX_SPACEDIM == 3
-    else if constexpr (dim == 2)
-    {
-        amrex::Real u_E = 0.5 * (u(i+1,j,k) + u(i+1,j,k-1));
-        amrex::Real u_W = 0.5 * (u(i,j,k) + u(i,j,k-1));
-
-        amrex::Real ke_w_E = 0.5 * (w(i+1,j,k) * w(i,j,k));
-        amrex::Real ke_w_W = 0.5 * (w(i,j,k) * w(i-1,j,k));
-
-        amrex::Real conv_x = (u_E * ke_w_E - u_W * ke_w_W) * invdx[0];
-        convterm = conv_x;
-
-        amrex::Real v_N = 0.5 * (v(i,j+1,k) + v(i,j+1,k-1));
-        amrex::Real v_S = 0.5 * (v(i,j,k) + v(i,j,k-1));
-
-        amrex::Real ke_w_N = 0.5 * (w(i,j+1,k) * w(i,j,k));
-        amrex::Real ke_w_S = 0.5 * (w(i,j,k) * w(i,j-1,k));
-
-        amrex::Real conv_y = (v_N * ke_w_N - v_S * ke_w_S) * invdx[1];
-        convterm += conv_y;
-        
-        amrex::Real w_F = 0.5 * (w(i,j,k+1) + w(i,j,k));
-        amrex::Real w_B = 0.5 * (w(i,j,k) + w(i,j,k-1));
-
-        amrex::Real ke_w_F = 0.5 * (w(i,j,k+1) * w(i,j,k));
-        amrex::Real ke_w_B = 0.5 * (w(i,j,k) * w(i,j,k-1));
-
-        amrex::Real conv_z = (w_F * ke_w_F - w_B * ke_w_B) * invdx[2];
-        convterm += conv_z;
-
-        return convterm;
-    }
-#endif
-    else
-    {
-        // this should never be reached
-        return 0.0;
-    }
-}
-
 // single call function for divergence of morinishiConvective
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real divMorinishiConvective(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
@@ -395,26 +336,10 @@ amrex::Real morinishiFlux(int i, int j, int k, amrex::Real invRe,
 {
     amrex::Real presterm = discreteGradientC2F<dim>(i, j, k, invdx, p);
     amrex::Real viscterm = invRe * discreteLaplacian(i, j, k, invdx2, vel_arr[dim]);
-    amrex::Real convterm = morinishiConvective<dim>(i, j, k, invdx, vel_arr);
+    // amrex::Real convterm = morinishiConvective<dim>(i, j, k, invdx, vel_arr);
+    amrex::Real convterm = nonLinearTerm<dim>(i, j, k, invdx, vel_arr);
 
     return (viscterm - presterm - convterm); 
-}
-
-// single call function for RHS of KE update in RK-stages
-template <int dim>
-AMREX_GPU_DEVICE AMREX_FORCE_INLINE
-amrex::Real morinishiKEFlux(int i, int j, int k, amrex::Real invRe,
-                          amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, 
-                          amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx2,
-                          amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr,
-                          amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> kecomp, 
-                          amrex::Array4<amrex::Real const> const& p)
-{
-    amrex::Real presterm = vel_arr[dim](i,j,k) * discreteGradientC2F<dim>(i, j, k, invdx, p);
-    amrex::Real viscterm = vel_arr[dim](i,j,k) * invRe * discreteLaplacian(i, j, k, invdx2, vel_arr[dim]);
-    amrex::Real convterm = morinishiKEConvective<dim>(i, j, k, invdx, vel_arr, kecomp);
-
-    return (viscterm - presterm - convterm);
 }
 
 #endif
