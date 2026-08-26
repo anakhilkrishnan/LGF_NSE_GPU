@@ -1,45 +1,48 @@
 #ifndef RKCOEFFICIENTS_H_
 #define RKCOEFFICIENTS_H_
 
-#include <AMReX_Vector.H>
 #include <AMReX_REAL.H>
+#include <cmath>
 
-struct RKCoeffs
+// struct for defining the Butcher RK tableau for a desired scheme
+// the indexing is 0-based
+// the struct is used by ProjectionWorkspace:
+// -> validation
+// -> precomputing IFs based on RK scheme
+// -> shifting indices to "shifted RK tableau", with 1-based indexing
+
+struct RKButcher
 {
-    amrex::Real alp;
-    amrex::Real bet;
-    amrex::Real gam;
+    // size for declaring arrays beforehand
+    static constexpr int MAX_STAGES = 3;   
+
+    int         n_stages;
+    amrex::Real A[MAX_STAGES][MAX_STAGES];
+    amrex::Real b[MAX_STAGES];
+    amrex::Real c[MAX_STAGES];
 };
 
-// Return a Vector instead of an Array!
-inline amrex::Vector<RKCoeffs> getRKCoeffs(int rk_stages)
+// set values for the desired HERK scheme below
+inline RKButcher getRKButcher()
 {
-    amrex::Vector<RKCoeffs> coeffs;
+    const amrex::Real r3 = std::sqrt(3.0);
 
-    if (rk_stages == 1) 
-    {
-        // Forward Euler (1 Stage)
-        coeffs.push_back({0.0, 1.0, 1.0});
-    }
-    else if (rk_stages == 2) 
-    {
-        // SSP-RK2 (2 Stages)
-        coeffs.push_back({0.0, 1.0, 1.0});
-        coeffs.push_back({0.5, 0.5, 2.0});
-    }
-    else if (rk_stages == 3) 
-    {
-        // SSP-RK3 (3 Stages)
-        coeffs.push_back({0.0, 1.0, 1.0});
-        coeffs.push_back({0.75, 0.25, 4.0});
-        coeffs.push_back({1.0/3.0, 2.0/3.0, 1.5});
-    }
-    else 
-    {
-        amrex::Abort("Error: Unsupported number of RK stages! Choose 1, 2, or 3.");
-    }
+    RKButcher t{}; // zero-init: only nonzero entries below
+    t.n_stages = 3;
 
-    return coeffs;
+    t.c[0] = 0.0;
+    t.c[1] = 0.5;
+    t.c[2] = 1.0;
+
+    t.b[0] = (3.0+r3)/6.0;
+    t.b[1] = -r3/3.0;
+    t.b[2] = (3.0+r3)/6.0;
+
+    t.A[1][0] = 0.5;
+    t.A[2][0] = r3/3.0;
+    t.A[2][1] = (3.0-r3)/3.0;
+
+    return t;
 }
 
 #endif

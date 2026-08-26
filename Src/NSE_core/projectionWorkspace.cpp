@@ -5,7 +5,6 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
 {
     // initializing required solver parameters
     n_lookup = config.n_lookup;
-    rk_stages = config.rk_stages;
     invRe = config.invRe;
     cfl = config.cfl;
 
@@ -40,6 +39,120 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     divU_at_end_max_norm_support = 0.0;
 
     dt = 0.0;
+
+    // compute shifted RK coeffs 
+    setupRKCoeffs(getRKButcher());
+
+    // pre-computing IF kernels for given RK tableau
+    precomputeIFs();
+}
+
+void ProjectionWorkspace::setupRKCoeffs(const RKButcher& rkbt)
+{
+    BL_PROFILE("<Setup> setupRKCoeffs()");
+
+    // set value of rk_stages member
+    rk_stages = rkbt.n_stages;
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_stages >= 3 && rk_stages <= RKButcher::MAX_STAGES,
+        "incompatible rk_stages and MAX_STAGES!");
+
+    // check if tableau is valid
+    const amrex::Real eps = 1.0e-14;
+
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.c[0]) < eps,
+        "c_1 must be 0 (explicit first stage)");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.c[rk_stages-1] - 1.0) < eps,
+        "c_s must be 1: required for second-order constraints, and what makes "
+        "the final integrating factor the identity (footnote 16)");
+
+    amrex::Real bsum = 0.0;
+    for (int j = 0; j < rk_stages; ++j) { bsum += rkbt.b[j]; }
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(bsum - 1.0) < eps, "sum(b) != 1");
+
+    for (int i = 0; i < rk_stages; ++i)
+    {
+        amrex::Real rowsum = 0.0;
+        for (int j = 0; j < rk_stages; ++j)
+        {// pre-computing IF kernels for given RK tableau
+    precomputeIFs();
+            if (j >= i) { AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.A[i][j]) < eps,
+                "A must be strictly lower triangular (explicit scheme)"); }
+            rowsum += rkbt.A[i][j];
+        }
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rowsum - rkbt.c[i]) < eps,
+            "row sums of A must equal c (consistency)");
+    }
+
+    // initialize values to be computed to zero
+    for (int i = 1; i <= RKButcher::MAX_STAGES; ++i)
+    {
+        rk_ct(i) = 0.0;  rk_gap(i) = 0.0;  rk_if_idx(i) = -1;
+        for (int j = 1; j <= RKButcher::MAX_STAGES; ++j) { rk_at(i,j) = 0.0; }
+    }
+
+    // compute and store shifted coefficients
+    for (int i = 1; i < rk_stages; ++i)
+    {
+        rk_ct(i) = rkbt.c[i];
+        for (int j = 1; j <= rk_stages; ++j)
+        {
+            rk_at(i,j) = rkbt.A[i][j-1];
+        }
+    }
+    rk_ct(rk_stages) = 1.0;
+    for (int j = 1; j <= rk_stages; ++j)
+    {
+        rk_at(rk_stages,j) = rkbt.b[j-1];
+    }
+
+    // compute ct_i - ct_i-1 values
+    amrex::Real prev = 0.0;
+    for (int i = 1; i <= rk_stages; ++i) { rk_gap(i) = rk_ct(i) - prev; prev = rk_ct(i); }
+
+    // validate the shifted tableau
+    for (int i = 1; i <= rk_stages; ++i)
+    {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rk_at(i,i)) > eps,
+            "a~_{i,i} == 0: Eq. (30) divides by it when forming w^{i,i}");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_gap(i) > -eps,
+            "negative sub-step width: H^i would be E(-alpha), which amplifies the "
+            "grid-scale mode. Tableau is IF-incompatible -- this is what rules out "
+            "SSP-RK3, whose c = [0, 1, 1/2]");
+    }
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_gap(rk_stages) < eps,
+        "final sub-step width should vanish when c_s == 1");
+
+    // make sub-vector of unique intervals, while updating a stage map
+    amrex::Vector<amrex::Real> rk_unique_gaps;
+    rk_unique_gaps.clear();
+
+    for (int i = 1; i <= rk_stages; ++i)
+    {
+        if (rk_gap(i) < 1.0e-14) { rk_if_idx(i) = -1; continue; }   // H^i = I, skip it
+
+        int found = -1;
+        for (int m = 0; m < rk_unique_gaps.size(); ++m)
+        {
+            if (std::abs(rk_gap(i) - rk_unique_gaps[m]) < 1.0e-14) { found = m; break; }
+        }
+        if (found < 0)
+        {
+            rk_unique_gaps.push_back(rk_gap(i));
+            found = static_cast<int>(rk_unique_gaps.size()) - 1;
+        }
+        rk_if_idx(i) = found;
+    }
+}
+
+void ProjectionWorkspace::precomputeIFs()
+{
+    BL_PROFILE("<Setup> precomputeIFs()");
+
+    // compute n required for desired eps tolerance
+    amrex::Real max_gap = 0.0;
+    for (auto g : rk_unique_gaps) { max_gap = std::max(max_gap, g); }
+
+    // compute modified Bessel in 1D and store in array
 }
 
 amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
@@ -85,49 +198,6 @@ amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
     return amrex::min(dt_adv, dt_diff);
 }
 
-amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArray* restrict_ba) const
-{
-    BL_PROFILE("<Compute> computeDivUMaxNorm()");
-
-    // function to reduce state directly into divUMaxNorm
-    // optionally takes ba input and restricts norm computation to those boxes
-
-    amrex::ReduceOps<amrex::ReduceOpMax> reduce_op;
-    amrex::ReduceData<amrex::Real> reduce_data(reduce_op);
-    using ReduceTuple = typename decltype(reduce_data)::Type;
-
-    // grid spacing for the stencil
-    const auto invdx = input_state.getGeom().InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
-
-    // You reduce over CELL-centered boxes (divergence is cell-centered),
-    // so iterate something cell-centered — e.g. the pressure MultiFab —
-    // to get the right box/loop domain, and read the face velocities into it.
-    for (amrex::MFIter mfi(input_state.getPres()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.validbox();
-        if (restrict_ba != nullptr && !restrict_ba->contains(bx)) { continue; }
-
-        AMREX_D_TERM(auto const& u = input_state.getVel(0).const_array(mfi);,
-                    auto const& v = input_state.getVel(1).const_array(mfi);,
-                    auto const& w = input_state.getVel(2).const_array(mfi);)
-
-        reduce_op.eval(bx, reduce_data, [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
-            {
-                // discrete divergence at cell (i,j,k) from surrounding faces
-                amrex::Real div =
-                    AMREX_D_TERM(  (u(i+1,j,k) - u(i,j,k)) * invdx[0],
-                                + (v(i,j+1,k) - v(i,j,k)) * invdx[1],
-                                + (w(i,j,k+1) - w(i,j,k)) * invdx[2] );
-                return { amrex::Math::abs(div) };
-            });
-    }
-
-    ReduceTuple hv = reduce_data.value(reduce_op);
-    amrex::Real max_div = amrex::get<0>(hv);
-    amrex::ParallelDescriptor::ReduceRealMax(max_div);
-    return max_div;
-}
-
 void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba)
 {
     BL_PROFILE("<Setup> InitializePresField()");
@@ -170,6 +240,18 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state, const amrex
     divU_at_end_max_norm = computeDivUMaxNorm(init_state);
     divU_at_end_max_norm_support = computeDivUMaxNorm(init_state, &init_supp_ba);
 }
+
+void ProjectionWorkspace::applyIF(amrex::MultiFab& phi_fab)
+{}
+
+void ProjectionWorkspace::computeRHSr(const FlowField& stage)
+{}
+
+void ProjectionWorkspace::computePressure(FlowField& stage)
+{}
+
+void ProjectionWorkspace::computeVelocity(FlowField& stage)
+{}
 
 void ProjectionWorkspace::computeMomentumFluxes(const FlowField& input_state)
 {
@@ -350,6 +432,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         amrex::Real beta = coeffs[k].bet;
         amrex::Real gamma = coeffs[k].gam;
 
+        computeRHSr();
+        computePressure();
+        computeVelocity();
+        
         // compute and store fluxes in workspace
         computeMomentumFluxes(stage);
 

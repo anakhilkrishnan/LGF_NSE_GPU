@@ -21,6 +21,9 @@ using namespace amrex;
 class ProjectionWorkspace
 {
     private:
+        static constexpr int MAX_STAGES = RKButcher::MAX_STAGES;
+        // brought for declaring scratch for IF-HERK along with shifted tableau
+
         // variables that are initialized in constructor call and live 
         // throughout solver life cycle
         int n_lookup;
@@ -32,7 +35,19 @@ class ProjectionWorkspace
 
         FlowField stage;
 
-        // scratch space type data
+        // rk shifted coefficients and scratch variables
+        amrex::Array2D<amrex::Real, 1, MAX_STAGES, 1, MAX_STAGES> rk_at; // a~_{i,j}
+        amrex::Array1D<amrex::Real, 1, MAX_STAGES> rk_ct; // c~_i
+        amrex::Array1D<amrex::Real, 1, MAX_STAGES> rk_gap; // c~_i - c~_{i-1}
+        amrex::Array1D<int, 1, MAX_STAGES> rk_if_idx;
+
+        // IF scratch
+
+        // scratch fields
+        amrex::MultiFab q;
+        amrex::MultiFab w;
+        amrex::MultiFab r;
+        amrex::MultiFab IF_buff;
         amrex::BoxArray tag_ba; // BoxArray that represents tagged support within ba
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
@@ -63,7 +78,7 @@ class ProjectionWorkspace
         void correctVelocityandPressure(amrex::Real gamma);
 
         amrex::Real computeDt(const FlowField& state_n) const;
-        amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr) const;
+        
         void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };

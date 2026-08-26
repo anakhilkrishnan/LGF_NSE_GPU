@@ -201,5 +201,48 @@ amrex::MultiFab computePlotDivU(const FlowField& state)
     return out;
 }
 
+amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArray* restrict_ba) const
+{
+    BL_PROFILE("<Compute> computeDivUMaxNorm()");
+
+    // function to reduce state directly into divUMaxNorm
+    // optionally takes ba input and restricts norm computation to those boxes
+
+    amrex::ReduceOps<amrex::ReduceOpMax> reduce_op;
+    amrex::ReduceData<amrex::Real> reduce_data(reduce_op);
+    using ReduceTuple = typename decltype(reduce_data)::Type;
+
+    // grid spacing for the stencil
+    const auto invdx = input_state.getGeom().InvCellSizeArray();  // {1/dx, 1/dy, 1/dz}
+
+    // You reduce over CELL-centered boxes (divergence is cell-centered),
+    // so iterate something cell-centered — e.g. the pressure MultiFab —
+    // to get the right box/loop domain, and read the face velocities into it.
+    for (amrex::MFIter mfi(input_state.getPres()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.validbox();
+        if (restrict_ba != nullptr && !restrict_ba->contains(bx)) { continue; }
+
+        AMREX_D_TERM(auto const& u = input_state.getVel(0).const_array(mfi);,
+                    auto const& v = input_state.getVel(1).const_array(mfi);,
+                    auto const& w = input_state.getVel(2).const_array(mfi);)
+
+        reduce_op.eval(bx, reduce_data, [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+            {
+                // discrete divergence at cell (i,j,k) from surrounding faces
+                amrex::Real div =
+                    AMREX_D_TERM(  (u(i+1,j,k) - u(i,j,k)) * invdx[0],
+                                + (v(i,j+1,k) - v(i,j,k)) * invdx[1],
+                                + (w(i,j,k+1) - w(i,j,k)) * invdx[2] );
+                return { amrex::Math::abs(div) };
+            });
+    }
+
+    ReduceTuple hv = reduce_data.value(reduce_op);
+    amrex::Real max_div = amrex::get<0>(hv);
+    amrex::ParallelDescriptor::ReduceRealMax(max_div);
+    return max_div;
+}
+
     
 
