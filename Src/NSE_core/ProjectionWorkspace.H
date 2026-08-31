@@ -32,6 +32,7 @@ class ProjectionWorkspace
 
         amrex::Real dt;
         amrex::Real invRe;
+        amrex::Real IF_eps;
 
         FlowField stage;
 
@@ -42,17 +43,33 @@ class ProjectionWorkspace
         amrex::Array1D<int, 1, MAX_STAGES> rk_if_idx;
 
         // IF scratch
-
+        amrex::Gpu::DeviceVector<amrex::Real> IF_1d_comp;
+        
         // scratch fields
-        amrex::MultiFab q;
-        amrex::MultiFab w;
-        amrex::MultiFab r;
-        amrex::MultiFab IF_buff;
         amrex::BoxArray tag_ba; // BoxArray that represents tagged support within ba
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
         amrex::MultiFab pres_corr;
+
+        // temp
+        int  n_IF;                                     // IF stencil half-width
+        amrex::Vector<amrex::Real>            rk_unique_gaps;
+        amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real>> if_table;  // [gap][0..n_IF]
+
+        // IF-HERK registers.  1-based in j: w[j] holds w^{.,j}; w[0] unused.
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> q;
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> r;
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> IF_buff;   // sweep scratch
+        amrex::Vector<amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>> w;
+
+        void setupRKCoeffs(const RKButcher& rkbt);
+        void precomputeIFs(const amrex::Geometry& geom);
+
+        // 1-based accessors
+        amrex::Real aT(int i,int j) const { return rk_at(i,j); }
+        amrex::Real cT(int i)       const { return rk_ct(i);   }
+        amrex::Real gapT(int i)     const { return rk_gap(i);  }
 
     public: 
 
@@ -70,14 +87,8 @@ class ProjectionWorkspace
         // functions for initialization
         void initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba);
 
-        // functions for flow field computations
-        void computeMomentumFluxes(const FlowField& input_state);
-        void predictVelocity(const FlowField& state_n, amrex::Real alpha, amrex::Real beta, amrex::Real gamma);
-        void computePressure();
-        void computeVelocityCorrection();
-        void correctVelocityandPressure(amrex::Real gamma);
-
-        amrex::Real computeDt(const FlowField& state_n) const;
+        void applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, int if_idx);
+        void computeGStage(const FlowField& st, int i);   // g^i -> w[i]
         
         void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);

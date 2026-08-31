@@ -63,8 +63,8 @@ void extendedMain()
 
         const amrex::BoxArray restart_supp_ba = dmgr.getSuppBoxArr();
         workspace.divU_max_norm = 0.0;
-        workspace.divU_at_end_max_norm = workspace.computeDivUMaxNorm(state_n);
-        workspace.divU_at_end_max_norm_support = workspace.computeDivUMaxNorm(state_n, &restart_supp_ba);
+        workspace.divU_at_end_max_norm = computeDivUMaxNorm(state_n);
+        workspace.divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &restart_supp_ba);
     }
     else
     {
@@ -111,12 +111,9 @@ void extendedMain()
     {
         auto step_start_time = amrex::second();
 
-        // always call computeDt() right before advanceTimeStep()
-        dt_master = workspace.computeDt(state_n);
-
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, dt_master, dmgr.getSuppBoxArr());
+        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr());
 
         // update counters
         time += dt_master;

@@ -5,6 +5,7 @@ max_grid_size = 32
 
 search_to_fine_ref_ratio = 4
 n_ghost = 2 # must be >= 2
+n_IF = 6
 n_comp = 1
 regrid_int = 2
 n_buffer_box = 2
@@ -16,10 +17,12 @@ rk_stages = 2
 max_steps = 30
 t_start = 0.0
 t_stop = 10.0
+set_dt = 0.005
 cfl = 0.5
 
 invRe = 0.00003
 support_threshold = 1e-6
+int_fact_threshold = 1e-9
 
 n_lookup = 32
 

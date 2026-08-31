@@ -17,6 +17,7 @@ struct SolverConfig
     int n_cell_search;
     int max_grid_size_search;
     int n_ghost;
+    int n_IF = 4;
     int n_comp = 1;
     int regrid_int = 5;
     int n_buffer_box = 2;
@@ -27,11 +28,12 @@ struct SolverConfig
     int rk_stages;
     int max_steps;
     amrex::Real t_start, t_stop;
-    amrex::Real cfl;
+    amrex::Real set_dt, cfl;
 
     // physical parameters
     amrex::Real invRe;
     amrex::Real supp_tag_eps;
+    amrex::Real int_fact_eps;
 
     // LGF kernel parameters
     int n_lookup;
@@ -45,6 +47,7 @@ struct SolverConfig
 
         pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
         pp.get("n_ghost", n_ghost);
+        pp.query("n_IF", n_IF);
         pp.query("n_comp", n_comp);
         pp.query("regrid_int", regrid_int);
         pp.query("n_buffer_box", n_buffer_box);
@@ -56,10 +59,12 @@ struct SolverConfig
         pp.get("max_steps", max_steps);
         pp.get("t_start", t_start);
         pp.get("t_stop", t_stop);
+        pp.get("set_dt", set_dt);
         pp.get("cfl", cfl);  
 
         pp.get("invRe", invRe);
         pp.get("support_threshold", supp_tag_eps);
+        pp.get("int_fact_threshold", int_fact_eps);
 
         pp.get("n_lookup", n_lookup);
 

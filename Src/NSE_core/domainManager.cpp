@@ -50,6 +50,8 @@ DomainManager::DomainManager(const SolverConfig& config)
     // no snug behaviour by default: whole domain is the support
     supp_ba     = ba;
     old_supp_ba = ba;
+
+    // set q-max and check if domain parameters will work
 }
 
 void DomainManager::defineScratch()

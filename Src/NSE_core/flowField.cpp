@@ -201,7 +201,7 @@ amrex::MultiFab computePlotDivU(const FlowField& state)
     return out;
 }
 
-amrex::Real ProjectionWorkspace::computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArray* restrict_ba) const
+amrex::Real computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArray* restrict_ba)
 {
     BL_PROFILE("<Compute> computeDivUMaxNorm()");
 

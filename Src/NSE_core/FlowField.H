@@ -37,6 +37,8 @@ class FlowField
         
         // fetch functions for private data
         const amrex::Geometry& getGeom() const { return globalgeom; }
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& getVelArr() { return vel; }
+        const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& getVelArr() const { return vel; }
         amrex::MultiFab& getVel(int idim) { return vel[idim]; }
         const amrex::MultiFab& getVel(int idim) const { return vel[idim]; }
         amrex::MultiFab& getPres() { return pres; }
@@ -54,7 +56,7 @@ amrex::MultiFab computePlotVorticity(const FlowField& state);
 amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
 void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
 amrex::MultiFab computePlotDivU(const FlowField& state);
-amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr) const;
+amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr);
 
 
 #endif
