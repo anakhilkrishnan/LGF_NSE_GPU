@@ -22,16 +22,10 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
 
         // declare the specific velocity component
         rhs_vel[idim].define(ba_face, dm_in, n_comp, n_ghost);
-        rhs_vel_corr[idim].define(ba_face, dm_in, n_comp, n_ghost);
 
         // initialize velocities upon creation
         rhs_vel[idim].setVal(0.0);
-        rhs_vel_corr[idim].setVal(0.0);
     }
-
-    // initialize pres_corr upon creation
-    pres_corr.define(ba_in, dm_in, n_comp, n_ghost);
-    pres_corr.setVal(0.0);
 
     // initialize divU upon creation
     divU.define(ba_in, dm_in, n_comp, n_ghost);
@@ -142,7 +136,6 @@ void ProjectionWorkspace::setupRKCoeffs(const RKButcher& rkbt)
         "final sub-step width should vanish when c_s == 1");
 
     // make sub-vector of unique intervals, while updating a stage map
-    amrex::Vector<amrex::Real> rk_unique_gaps;
     rk_unique_gaps.clear();
 
     for (int i = 1; i <= rk_stages; ++i)
@@ -232,41 +225,6 @@ void ProjectionWorkspace::setupRKCoeffs(const RKButcher& rkbt)
 //     return amrex::min(dt_adv, dt_diff);
 // }
 
-void ProjectionWorkspace::initializePresField(FlowField& init_state,
-                                              const amrex::BoxArray& init_supp_ba)
-{
-    BL_PROFILE("<Setup> initializePresField()");
-
-    // DIAGNOSTIC ONLY under IF-HERK: dhat^i is solved fresh every stage and
-    // the previous value of pres is never read.  This supplies d at t=0 for
-    // the initial plotfile and smoke-tests the Poisson path.
-    init_state.setBoundary();
-
-    computeGStage(init_state, 1);          // w[1] = -a~_11 dt Ntilde(u_0)
-
-    divU.setVal(0.0);
-    const auto invdx = init_state.getGeom().InvCellSizeArray();
-    for (amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& div_arr = divU.array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> g_arr{
-            AMREX_D_DECL(w[1][0].const_array(mfi),
-                         w[1][1].const_array(mfi),
-                         w[1][2].const_array(mfi))};
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i,int j,int k)
-        { div_arr(i,j,k) = discreteDivergenceF2C(i,j,k, invdx, g_arr); });
-    }
-
-    lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), init_supp_ba);
-    init_state.getPres().mult(1.0 / (aT(1,1) * dt), 0);      // dhat -> d, Eq. (31)
-    init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
-
-    divU_max_norm                = divU.norm0(0, 0, false);
-    divU_at_end_max_norm         = computeDivUMaxNorm(init_state);
-    divU_at_end_max_norm_support = computeDivUMaxNorm(init_state, &init_supp_ba);
-}
-
 // ---------------------------------------------------------------------------
 // 3.  precomputeIFs -- 1D tables  g_a(n) = exp(-2a) I_n(2a),  n = 0..n_IF
 // ---------------------------------------------------------------------------
@@ -279,8 +237,6 @@ void ProjectionWorkspace::precomputeIFs(const amrex::Geometry& geom)
     const amrex::Real dx  = geom.CellSize(0);
     const amrex::Real dx2 = dx * dx;
     AMREX_ALWAYS_ASSERT(std::abs(geom.CellSize(1) - dx) < 1.0e-12 * dx);
-
-    n_IF = 14;   // TODO: size from IF_eps once the chassis runs
 
     if_table.resize(rk_unique_gaps.size());
 
@@ -334,6 +290,11 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
     const amrex::Real* tab = if_table[if_idx].dataPtr();
     const int          n   = n_IF;
     const auto&        per = stage.getGeom().periodicity();
+
+    if (if_idx < 0) {                                  // H = I
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) { fld[d].FillBoundary(per); }
+        return;
+    }
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
@@ -405,6 +366,41 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i)
 #endif
         }
     }
+}
+
+void ProjectionWorkspace::initializePresField(FlowField& init_state,
+                                              const amrex::BoxArray& init_supp_ba)
+{
+    BL_PROFILE("<Setup> initializePresField()");
+
+    // DIAGNOSTIC ONLY under IF-HERK: dhat^i is solved fresh every stage and
+    // the previous value of pres is never read.  This supplies d at t=0 for
+    // the initial plotfile and smoke-tests the Poisson path.
+    init_state.setBoundary();
+
+    computeGStage(init_state, 1);          // w[1] = -a~_11 dt Ntilde(u_0)
+
+    divU.setVal(0.0);
+    const auto invdx = init_state.getGeom().InvCellSizeArray();
+    for (amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& div_arr = divU.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> g_arr{
+            AMREX_D_DECL(w[1][0].const_array(mfi),
+                         w[1][1].const_array(mfi),
+                         w[1][2].const_array(mfi))};
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i,int j,int k)
+        { div_arr(i,j,k) = discreteDivergenceF2C(i,j,k, invdx, g_arr); });
+    }
+
+    lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), init_supp_ba);
+    init_state.getPres().mult(1.0 / (aT(1,1) * dt), 0);      // dhat -> d, Eq. (31)
+    init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
+
+    divU_max_norm                = divU.norm0(0, 0, false);
+    divU_at_end_max_norm         = computeDivUMaxNorm(init_state);
+    divU_at_end_max_norm_support = computeDivUMaxNorm(init_state, &init_supp_ba);
 }
 
 
@@ -509,6 +505,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     // --- Eq. (31): d_{k+1} = (a~_{s,s} dt)^{-1} dhat^s ---------------------
     stage.getPres().mult(1.0 / (aT(rk_stages, rk_stages) * dt), 0);
 
+    stage.setBoundary();
     state_n = stage;
 
     divU_at_end_max_norm         = computeDivUMaxNorm(state_n);
@@ -526,18 +523,28 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
         amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
         
         rhs_vel[idim].define(new_ba_face, new_dm, rhs_vel[idim].nComp(), rhs_vel[idim].nGrow());
-        rhs_vel_corr[idim].define(new_ba_face, new_dm, rhs_vel_corr[idim].nComp(), rhs_vel_corr[idim].nGrow());
 
         rhs_vel[idim].setVal(0.0);
-        rhs_vel_corr[idim].setVal(0.0);
+
+        // update other buffers
+        q[idim]      .define(new_ba_face, new_dm, q[idim].nComp(),       q[idim].nGrow());
+        r[idim]      .define(new_ba_face, new_dm, r[idim].nComp(),       r[idim].nGrow());
+        IF_buff[idim].define(new_ba_face, new_dm, IF_buff[idim].nComp(), IF_buff[idim].nGrow());
+        q[idim].setVal(0.0);  r[idim].setVal(0.0);  IF_buff[idim].setVal(0.0);
+
+        for (int j = 1; j <= rk_stages; ++j)
+        {
+            w[j][idim].define(new_ba_face, new_dm, w[j][idim].nComp(), w[j][idim].nGrow());
+            w[j][idim].setVal(0.0);
+        }
     }
 
     // reallocate cell-centered arrays
-    pres_corr.define(new_ba, new_dm, pres_corr.nComp(), pres_corr.nGrow());
-    pres_corr.setVal(0.0);
     divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
     divU.setVal(0.0);
 
     // update the Poisson solver
     lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);  
+
+    
 }

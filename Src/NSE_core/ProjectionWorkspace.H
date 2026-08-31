@@ -49,8 +49,6 @@ class ProjectionWorkspace
         amrex::BoxArray tag_ba; // BoxArray that represents tagged support within ba
 
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
-        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel_corr;
-        amrex::MultiFab pres_corr;
 
         // temp
         int  n_IF;                                     // IF stencil half-width

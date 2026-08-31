@@ -32,7 +32,7 @@ void extendedMain()
 
     // creating timestepping variables beforehand
     amrex::Real time = 0.0;
-    amrex::Real dt_master = 0.0; // master, not to be confused with workspace.dt
+    amrex::Real dt_master = sol_cfg.set_dt; // master, not to be confused with workspace.dt
     int step = 0;
 
     DomainManager dmgr(sol_cfg);
