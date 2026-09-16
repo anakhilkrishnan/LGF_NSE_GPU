@@ -91,18 +91,20 @@ void LGFOpenBC::doSolve(const amrex::MultiFab& source, amrex::MultiFab& target,
 
     if (tag_ba.empty()) { return; }   // no sources => u == 0 everywhere
 
-    // restrict the source field to the support, specified by tag_ba
-    if (!rhs.ok() || rhs_tag_ba != tag_ba)
-    {
-        // create appropriate nodal/cell-centered rhs_ba and corresponding dm
-        amrex::BoxArray rhs_ba = amrex::convert(tag_ba, source.ixType());
-        amrex::DistributionMapping rhs_dm(rhs_ba);
+    // check if solve is nodal or cell-centered and assign correct buffer
+    const bool is_nodal = source.ixType().nodeCentered();
+    auto& rhs = is_nodal ? nd_rhs : cc_rhs;
 
-        // update rhs multifab
+    // restrict the source field to the support, specified by tag_ba
+    amrex::BoxArray rhs_ba = amrex::convert(tag_ba, source.ixType());
+    if (!rhs.ok() || rhs.boxArray() != rhs_ba) {
         rhs.clear();
-        rhs.define(rhs_ba, rhs_dm, 1, 0);
-        rhs_tag_ba = tag_ba;
+        rhs.define(rhs_ba, amrex::DistributionMapping(rhs_ba), 1, 0);
     }
+    rhs.setVal(0.0);
+
+    // assert before copying
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rhs.ixType() == source.ixType(), "LGFOpenBC: rhs buffer index type does not match source");
     rhs.ParallelCopy(source, 0, 0, 1);
 
     buildSolver(makeDomain(target, tag_ba)).solve(target, rhs);
@@ -132,6 +134,8 @@ void LGFOpenBC::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArra
     geom = new_geom;
 
     // clear cache
+    cc_rhs.clear();
+    nd_rhs.clear();
     cc_solver.reset();
     nd_solver.reset();
     cached_cc_domain = amrex::Box(amrex::IntVect(AMREX_D_DECL(0,0,0)), amrex::IntVect(AMREX_D_DECL(-1,-1,-1)));

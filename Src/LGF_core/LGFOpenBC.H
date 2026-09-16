@@ -57,8 +57,8 @@ private:
     std::unique_ptr<amrex::FFT::OpenBCSolver<amrex::Real>> nd_solver;
 
     // scratch multifab for storing tagged source alone
-    amrex::MultiFab rhs;
-    amrex::BoxArray rhs_tag_ba;
+    amrex::MultiFab cc_rhs;
+    amrex::MultiFab nd_rhs;
 
     // function for finding bounding-box domain that fully covers all target
     // cells and all tagged source boxes
