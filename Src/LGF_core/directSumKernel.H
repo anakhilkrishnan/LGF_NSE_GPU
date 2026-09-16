@@ -31,6 +31,7 @@ amrex::Real computeLGF(int n_lookup,
 
     // 2D Kernel computations
 #if AMREX_SPACEDIM == 2
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_lookup <= 32, "n_lookup larger than lookup table size!");
     if ((nx * nx + ny * ny <= ((n_lookup - 1) * (n_lookup - 1))))
     {
         return nearField2D(nx, ny);
@@ -40,7 +41,13 @@ amrex::Real computeLGF(int n_lookup,
 #endif
 
 #if AMREX_SPACEDIM == 3
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_lookup <= 16, "n_lookup larger than lookup table size!");
+    if ((nx * nx + ny * ny + nz * nz <= ((n_lookup - 1) * (n_lookup - 1))))
+    {
+        return nearField3D(nx, ny, nz);
+    }
 
+    return farField3D(deltax, deltay, deltaz);
 #endif
 }
 

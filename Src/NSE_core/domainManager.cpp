@@ -336,7 +336,7 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
 #endif
 }
 
-void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver)
+void DomainManager::vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver)
 {
     BL_PROFILE("<Compute> DomainManager::vor2vel()");
 
@@ -414,7 +414,7 @@ void DomainManager::vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_so
     state.setBoundary();
 }
 
-void DomainManager::checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver, int step)
+void DomainManager::checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver, int step)
 {
 #ifdef ENABLE_DEBUG_CHECKS
 #ifdef AMREX_USE_MPI

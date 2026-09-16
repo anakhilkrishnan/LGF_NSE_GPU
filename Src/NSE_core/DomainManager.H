@@ -15,7 +15,7 @@
 #include <SolverConfig.H>
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
-#include <DirectSumLGF.H>
+#include <LGFOpenBC.H>
 
 // free function: this must be defined in NSE_run
 void initializeVelField(FlowField& init_state);
@@ -80,11 +80,11 @@ class DomainManager
         void initializeSnugDomain();
         void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
         void checkAndUpdateSnugDomain(const FlowField& state);
-        void checkAndRefreshVelocity(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver, int step);
+        void checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver, int step);
         
 
         // supporting functions
-        void vor2vel(FlowField& state, DirectSumLGF& lgf_nodal_poisson_solver);
+        void vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver);
 };  
 
 #endif

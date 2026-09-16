@@ -14,7 +14,7 @@
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
 #include <RKCoefficients.H>
-#include <DirectSumLGF.H>
+#include <LGFOpenBC.H>
 
 using namespace amrex;
 
@@ -72,7 +72,7 @@ class ProjectionWorkspace
     public: 
 
         // public, so it can be passed to DomainManager when field needs to be updated
-        DirectSumLGF lgf_poisson_solver;
+        LGFOpenBC lgf_poisson_solver;
 
         amrex::MultiFab divU; // refers to divU star, the RHS of what the Poisson solver sees
 

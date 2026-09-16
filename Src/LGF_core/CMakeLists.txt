@@ -1,9 +1,9 @@
 # Define the library and its source files
 add_library(LGF_core_lib STATIC
-    LGFKernels.H
     directSumKernel.H
-    DirectSumLGF.H
-    directSumLGF.cpp
+    LGFKernels.H
+    LGFOpenBC.H
+    LGFOpenBC.cpp
 )
 
 if(AMReX_GPU_BACKEND STREQUAL "CUDA")

@@ -1,0 +1,68 @@
+expansion : farField3D_10terms.inc  (q up to 10)
+table     : G_R16.npy  (exact for |n| <= 15)
+
+parser check A^1 vs hardcoded reference : 3.469e-18  OK
+parser check A^2 vs hardcoded reference : 3.469e-18  OK
+
+relative error, max over shell:  |G - A^q| / |G|
+   r      A^1       A^2       A^3       A^5       A^10  
+  -------------------------------------------------------
+    2    7.23e-02  1.43e-02  2.74e-02  3.56e-01  6.34e+04
+    3    3.70e-02  1.03e-02  1.71e-03  1.53e-02  4.76e+01
+    4    1.94e-02  4.12e-03  1.37e-03  8.96e-04  3.58e-01
+    5    1.15e-02  1.64e-03  5.05e-04  1.52e-05  6.56e-03
+    6    7.62e-03  7.24e-04  1.74e-04  2.49e-05  3.01e-04
+    7    5.44e-03  3.62e-04  6.41e-05  9.15e-06  2.14e-05
+    8    4.09e-03  2.01e-04  2.62e-05  2.82e-06  1.85e-06
+    9    3.20e-03  1.21e-04  1.20e-05  8.61e-07  1.61e-07
+   10    2.57e-03  7.77e-05  6.02e-06  2.78e-07  1.67e-08
+   11    2.11e-03  5.23e-05  3.27e-06  9.77e-08  8.23e-10
+   12    1.77e-03  3.65e-05  1.89e-06  3.76e-08  5.66e-10
+   13    1.50e-03  2.63e-05  1.15e-06  1.58e-08  1.80e-10
+   14    1.29e-03  1.94e-05  7.25e-07  7.15e-09  4.91e-11
+   15    1.12e-03  1.47e-05  4.74e-07  3.46e-09  1.26e-11
+
+optimal q per radius (asymptotic series -- more terms is not better)
+     r   best q   best error    A^10 is
+  ----------------------------------------------
+     2      2     1.431e-02   4428276.6x worse
+     3      3     1.710e-03    27808.9x worse
+     4      4     2.876e-04     1245.9x worse
+     5      5     1.519e-05      432.0x worse
+     6      6     5.403e-06       55.8x worse
+     7      7     1.763e-06       12.1x worse
+     8      7     4.451e-07        4.2x worse
+     9      8     5.776e-08        2.8x worse
+    10      9     7.181e-09        2.3x worse
+    11     10     8.232e-10        1.0x worse
+    12     10     5.662e-10        1.0x worse
+    13     10     1.803e-10        1.0x worse
+    14     10     4.913e-11        1.0x worse
+    15     10     1.260e-11        1.0x worse
+
+r_eps: smallest radius meeting each tolerance, and the q that does it
+     tol       r_eps   q   n_lookup   table size   storage
+  ------------------------------------------------------------
+   1e-05          6   6        7          2.7 KB   constexpr
+   1e-06          8   7        9          5.7 KB   constexpr
+   1e-08         10   9       11         10.4 KB   constexpr
+   1e-10         14  10       15         26.4 KB   constexpr
+   1e-12       > 15   (not reached inside the exact table; regenerate at larger --n-lookup)
+
+round-off floor from coefficient cancellation (eps = 2.2e-16)
+     p    max|coeff|      r=8        r=15       r=30
+  ----------------------------------------------------
+     0    2.500e-01   2.20e-16   2.20e-16   2.20e-16
+     1    3.125e-01   4.30e-18   1.22e-18   3.06e-19
+     2    9.023e+00   1.94e-18   1.57e-19   9.80e-21
+     3    1.584e+03   5.32e-18   1.22e-19   1.91e-21
+     4    4.476e+05   2.35e-17   1.54e-19   6.00e-22
+     5    1.930e+08   1.58e-16   2.95e-19   2.88e-22
+     6    1.193e+11   1.53e-15   8.09e-19   1.98e-22
+     7    1.390e+14   2.78e-14   4.19e-18   2.56e-22
+     8    1.992e+17   6.23e-13   2.67e-17   4.07e-22
+     9    3.440e+20   1.68e-11   2.05e-16   7.81e-22
+
+  If a floor exceeds your target tolerance at your working radius,
+  that order cannot be evaluated usefully in double precision --
+  reduce q rather than enlarging the table.
