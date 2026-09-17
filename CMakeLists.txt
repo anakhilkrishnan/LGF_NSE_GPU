@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 
 project(LGF_NSE LANGUAGES C CXX)
 
@@ -42,6 +42,8 @@ else()
 
 endif()
 
+cmake_path(GET CMAKE_BINARY_DIR PARENT_PATH BUILD_PARENT_DIR)
+
 # adding additional repositories
 add_subdirectory(Src/LGF_core)
 add_subdirectory(Src/NSE_core)
@@ -49,6 +51,6 @@ add_subdirectory(Src/NSE_run)
 
 
 # make Exec directories in case they're not present
-file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/Exec/NSE_test/Results")
-file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/Exec/NSE_test/Logs")
+file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/Exec/NSE_test/Results")
+file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/Exec/NSE_test/Logs")
 
