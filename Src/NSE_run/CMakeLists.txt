@@ -22,7 +22,7 @@ target_include_directories(nserun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(nserun PRIVATE NSE_core_lib)
 
 set_target_properties(nserun PROPERTIES 
-    RUNTIME_OUTPUT_DIRECTORY "${BUILD_PARENT_DIR}/Exec/NSE_test"
+    RUNTIME_OUTPUT_DIRECTORY "${BUILD_PARENT_DIR}/NSE_test"
 )
 
 option(ENABLE_DEBUG_CHECKS "Cross-rank BoxArray/DistributionMapping consistency asserts" OFF)
@@ -35,7 +35,7 @@ endif()
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/inputs"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/inputs"
+    "${BUILD_PARENT_DIR}/NSE_test/inputs"
     COMMENT "Syncing inputs file to Exec/NSE_test..."
 )
 
@@ -43,7 +43,7 @@ add_custom_command(TARGET nserun POST_BUILD
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/debug.sh"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/debug.sh"
+    "${BUILD_PARENT_DIR}/NSE_test/debug.sh"
     COMMENT "Syncing jobscript to Exec/NSE_test..."
 )
 
@@ -51,14 +51,14 @@ add_custom_command(TARGET nserun POST_BUILD
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_single.sh"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/gpu_single.sh"
+    "${BUILD_PARENT_DIR}/NSE_test/gpu_single.sh"
 )
 
 # Update the jobscript file
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_multi.sh"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/gpu_multi.sh"
+    "${BUILD_PARENT_DIR}/NSE_test/gpu_multi.sh"
     COMMENT "Syncing GPU jobscripts to Exec/NSE_test..."
 )
 
@@ -66,7 +66,7 @@ add_custom_command(TARGET nserun POST_BUILD
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/postProcessKE.py"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/Results/postProcessKE.py"
+    "${BUILD_PARENT_DIR}/NSE_test/Results/postProcessKE.py"
     COMMENT "Syncing KE postprocessing file to Exec/NSE_test..."
 )
 
@@ -74,6 +74,6 @@ add_custom_command(TARGET nserun POST_BUILD
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/description.txt"
-    "${BUILD_PARENT_DIR}/Exec/NSE_test/description.txt"
+    "${BUILD_PARENT_DIR}/NSE_test/description.txt"
     COMMENT "Syncing case description file to Exec/NSE_test..."
 )

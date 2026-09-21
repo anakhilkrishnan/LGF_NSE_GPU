@@ -4,7 +4,8 @@ n_cell = 1024
 max_grid_size = 32
 
 search_to_fine_ref_ratio = 4
-n_ghost = 2 # must be >= 2
+n_ghost = 6 # must be >= 2
+n_ghost_max = 6
 n_IF = 6
 n_comp = 1
 regrid_int = 2

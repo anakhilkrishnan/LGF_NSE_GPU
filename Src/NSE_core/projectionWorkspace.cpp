@@ -1,7 +1,7 @@
 #include <ProjectionWorkspace.H>
 
 ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config)
-    : stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost), lgf_poisson_solver(geom_in, config.n_lookup)
+    : stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost), lgf_poisson_solver(geom_in, ba_in, config.n_lookup, config.n_ghost_max)
 {
     // initializing required solver parameters
     n_lookup = config.n_lookup;
@@ -285,17 +285,16 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
 {
     BL_PROFILE("<Compute> applyIF()");
 
-    if (if_idx < 0) { return; }                       // H = I, nothing to do
-
-    const amrex::Real* tab = if_table[if_idx].dataPtr();
-    const int          n   = n_IF;
     const auto&        per = stage.getGeom().periodicity();
-
-    if (if_idx < 0) {                                  // H = I
+    if (if_idx < 0) 
+    {                                  // H = I
         for (int d = 0; d < AMREX_SPACEDIM; ++d) { fld[d].FillBoundary(per); }
         return;
     }
 
+    const amrex::Real* tab = if_table[if_idx].dataPtr();
+    const int          n   = n_IF;
+    
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         for (int sd = 0; sd < AMREX_SPACEDIM; ++sd)
@@ -323,6 +322,7 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
             }
             std::swap(fld[idim], IF_buff[idim]);      // result back in fld
         }
+        fld[idim].FillBoundary(per);
     }
 }
 
@@ -508,6 +508,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     stage.setBoundary();
     state_n = stage;
 
+    divU_max_norm                = divU.norm0(0, 0, false);
     divU_at_end_max_norm         = computeDivUMaxNorm(state_n);
     divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &tag_ba);
 }

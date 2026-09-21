@@ -51,6 +51,6 @@ add_subdirectory(Src/NSE_run)
 
 
 # make Exec directories in case they're not present
-file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/Exec/NSE_test/Results")
-file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/Exec/NSE_test/Logs")
+file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/NSE_test/Results")
+file(MAKE_DIRECTORY "${BUILD_PARENT_DIR}/NSE_test/Logs")
 

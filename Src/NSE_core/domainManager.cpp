@@ -357,7 +357,7 @@ void DomainManager::vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solve
     }
     
     // compute streamfunction using poisson solve
-    lgf_nodal_poisson_solver.solveNodalPoisson(vort_nd, psi, tag_ba);
+    lgf_nodal_poisson_solver.solvePoisson(vort_nd, psi, tag_ba);
     psi.FillBoundary(geom.periodicity());
 
     // initialize error multifab to zero

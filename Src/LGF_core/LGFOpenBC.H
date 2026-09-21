@@ -44,40 +44,57 @@ class LGFOpenBC
 private:
 
     amrex::Geometry geom;
+    amrex::BoxArray xsoln_ba_ref; // local reference copy of xsoln_ba from DomainManager
     int n_lookup;
+    int n_ghost_max;
+
+    // the solver handles nodal/face/edge based multiFabs by copying them into
+    // larger cell-centered multiFabs; the operation is referred to as
+    // 'retype'
+    struct retypeSlot
+    {
+        amrex::BoxArray original_ba; // stores the boxArray from the input multiFab
+        amrex::MultiFab cc_copy; // stores the cell-centered copy of the input
+    };
+    retypeSlot retype_source;
+    retypeSlot retype_target;
+
+    // HELPER functions for handling the retype
+    // function that substitutes amrex::convert without the index drop
+    static amrex::BoxArray retypeBoxArray(const amrex::BoxArray& ba);
+    // function for fetching retype'd MultiFab
+    amrex::MultiFab& retypedMultiFab(retypeSlot& slot, const amrex::MultiFab& in);
+    // function for copying across IndexType
+    static void retypeCopy(amrex::MultiFab& dst, const amrex::MultiFab& src);
 
     // the domain that the spectral Green's function is built on, for
     // cell-centered and nodal MultiFabs respectively; these are computed once,
     // stored and recomputed only when regridOnto() is called
-    amrex::Box cached_cc_domain;
-    amrex::Box cached_nd_domain;
+    amrex::Box cached_domain;
 
     // creating object for AMReX's FFT class OpenBCSolver
-    std::unique_ptr<amrex::FFT::OpenBCSolver<amrex::Real>> cc_solver;
-    std::unique_ptr<amrex::FFT::OpenBCSolver<amrex::Real>> nd_solver;
+    std::unique_ptr<amrex::FFT::OpenBCSolver<amrex::Real>> solver;
 
     // scratch multifab for storing tagged source alone
-    amrex::MultiFab cc_rhs;
-    amrex::MultiFab nd_rhs;
+    amrex::MultiFab rhs;
 
     // function for finding bounding-box domain that fully covers all target
     // cells and all tagged source boxes
-    amrex::Box makeDomain(const amrex::MultiFab& target, const amrex::BoxArray& tag_ba) const;
+    amrex::Box makeDomain(const amrex::BoxArray& xsoln_ba, const amrex::BoxArray& tag_ba) const;
 
 
 public:
 
-    LGFOpenBC(const amrex::Geometry& geom_in, int n_look_in);
+    LGFOpenBC(const amrex::Geometry& geom_in, const amrex::BoxArray xsoln_ba_in, int n_look_in, int n_ghost_max_in);
 
     // HELPER functions, kept public because GPU kernel needs to be launched
     // checks if cached domain reflects current domain; rebuilds if necessary
-    amrex::FFT::OpenBCSolver<amrex::Real>& buildSolver(const amrex::Box& domain);
+    void buildSolver(const amrex::Box& domain);
     // core solve function; invokes functions from AMReX::FFT
     void doSolve(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba);
 
     // WRAPPER functions for external calling
     void solvePoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba);
-    void solveNodalPoisson(const amrex::MultiFab& source, amrex::MultiFab& target, const amrex::BoxArray& tag_ba);
     void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
       
 };
