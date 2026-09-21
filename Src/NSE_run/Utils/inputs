@@ -14,7 +14,6 @@ n_shed_box = 1
 domain_lo = -2.0 -2.0 -2.0
 domain_hi = 2.0 2.0 2.0
 
-rk_stages = 2
 max_steps = 30
 t_start = 0.0
 t_stop = 10.0

@@ -31,9 +31,9 @@ void extendedMain()
     sol_cfg.readInputs();
 
     // creating timestepping variables beforehand
-    amrex::Real time = 0.0;
+    amrex::Real time_keeper = 0.0;
     amrex::Real dt_master = sol_cfg.set_dt; // master, not to be confused with workspace.dt
-    int step = 0;
+    int step_keeper = 0;
 
     DomainManager dmgr(sol_cfg);
     
@@ -42,7 +42,7 @@ void extendedMain()
     {
         amrex::BoxArray chk_ba;
         amrex::BoxArray chk_supp_ba;
-        io.initializeBoxArrFromChk(step, time, chk_ba, chk_supp_ba);
+        io.initializeBoxArrFromChk(step_keeper, time_keeper, chk_ba, chk_supp_ba);
         dmgr.restartSnugDomain(chk_ba, chk_supp_ba);
     }
     else
@@ -68,8 +68,8 @@ void extendedMain()
     }
     else
     {
-        time = sol_cfg.t_start;
-        step = 0;
+        time_keeper = sol_cfg.t_start;
+        step_keeper = 0;
 
         // starting from initial conditions
         initializeVelField(state_n);
@@ -88,10 +88,10 @@ void extendedMain()
     state_n.setBoundary();
     
     // plotting initial conditions
-    if (io_cfg.write_plot && step == 0)
+    if (io_cfg.write_plot && step_keeper == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(0, io_cfg.plot_only_support, step, time, state_n, dmgr);
+        io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
 
     }
 
@@ -101,13 +101,21 @@ void extendedMain()
     // tracking solver initialization time, from the moment 
     auto init_stop_time = amrex::second();
     auto init_duration = init_stop_time - overall_start_time;
-    amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
+    amrex::Print() << "Step: " << step_keeper << " | Time: " << time_keeper << " | dt: " << dt_master 
                     << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                     << " | divU_max: " << workspace.divU_at_end_max_norm
                     << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
 
+    // check if max_steps is to be used or not
+    const bool use_max_steps = (sol_cfg.max_steps >= 0);
+    const bool use_t_stop    = (sol_cfg.t_stop > sol_cfg.t_start);  
+
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(use_max_steps || use_t_stop,
+        "No stopping criterion: set max_steps >= 0 or t_stop > t_start");
+
     // timestepping logic begins
-    while(time < sol_cfg.t_stop && step < sol_cfg.max_steps)
+    while ((!use_max_steps || step_keeper < sol_cfg.max_steps) &&
+            (!use_t_stop    || time_keeper < sol_cfg.t_stop))
     {
         auto step_start_time = amrex::second();
 
@@ -116,14 +124,14 @@ void extendedMain()
         workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr());
 
         // update counters
-        time += dt_master;
-        step++;
+        time_keeper += dt_master;
+        step_keeper++;
 
         //  plot in specified intervals
-        if (step % io_cfg.plot_int == 0 && io_cfg.write_plot)
+        if (step_keeper % io_cfg.plot_int == 0 && io_cfg.write_plot)
         {
             BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(0, io_cfg.plot_only_support, step, time, state_n, dmgr);
+            io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
         }
 
         
@@ -137,12 +145,12 @@ void extendedMain()
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
-        dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step);
+        dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step_keeper);
 
         // plot diagnostics
-        if (io_cfg.plot_post_regrid && (dmgr.did_snug_domain_change || step % io_cfg.plot_post_regrid_int == 0))
+        if (io_cfg.plot_post_regrid && (dmgr.did_snug_domain_change || step_keeper % io_cfg.plot_post_regrid_int == 0))
         {
-            io.writeMyPlotFile(1, false, step, time, state_n, dmgr);
+            io.writeMyPlotFile(1, false, step_keeper, time_keeper, state_n, dmgr);
         }
 
         // refresh flag after all dependent processes are complete
@@ -152,7 +160,7 @@ void extendedMain()
         auto regrid_stop_time = amrex::second();
         auto regrid_duration = regrid_stop_time - regrid_start_time;
 
-        amrex::Print() << "Snug domain management at end of step " << step
+        amrex::Print() << "Snug domain management at end of step " << step_keeper
                         << " complete | WallTime: " << (regrid_duration) << "s"
                         AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
                                     << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
@@ -160,10 +168,10 @@ void extendedMain()
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval
-        if ((step %io_cfg.chk_int == 0 || (step - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
+        if ((step_keeper %io_cfg.chk_int == 0 || (step_keeper - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
         {
             BL_PROFILE("<IO> Interval Checkpoint()");
-            io.writeMyChkFile(writeMainChk, step, time, state_n, dmgr.getSuppBoxArr());
+            io.writeMyChkFile(writeMainChk, step_keeper, time_keeper, state_n, dmgr.getSuppBoxArr());
             writeMainChk = !writeMainChk;
         }
 
@@ -172,7 +180,7 @@ void extendedMain()
         auto step_duration = step_stop_time - step_start_time;
 
         // print to terminal each timestep
-        amrex::Print() << "Step: " << step << " | Time: " << time << " | dt: " << dt_master 
+        amrex::Print() << "Step: " << step_keeper << " | Time: " << time_keeper << " | dt: " << dt_master 
                         << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                         << " | divU_max: " << workspace.divU_at_end_max_norm
                         << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";

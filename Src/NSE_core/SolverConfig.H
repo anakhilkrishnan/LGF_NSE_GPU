@@ -26,7 +26,6 @@ struct SolverConfig
     amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
 
     // time stepping parameters
-    int rk_stages;
     int max_steps;
     amrex::Real t_start, t_stop;
     amrex::Real set_dt, cfl;
@@ -57,7 +56,6 @@ struct SolverConfig
         pp.get("domain_lo", dom_lo);
         pp.get("domain_hi", dom_hi);
 
-        pp.get("rk_stages", rk_stages);
         pp.get("max_steps", max_steps);
         pp.get("t_start", t_start);
         pp.get("t_stop", t_stop);
