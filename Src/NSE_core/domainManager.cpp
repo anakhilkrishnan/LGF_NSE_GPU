@@ -13,8 +13,10 @@ DomainManager::DomainManager(const SolverConfig& config)
     // initializing domain parameters needed from config
     n_cell = config.n_cell;
     max_grid_size = config.max_grid_size;
+    n_lookup = config.n_lookup;
     n_comp = config.n_comp;
     n_ghost = config.n_ghost;
+    n_ghost_max = config.n_ghost_max;
     dom_lo = config.dom_lo;
     dom_hi = config.dom_hi;
     n_buffer_box = config.n_buffer_box;
@@ -56,13 +58,22 @@ DomainManager::DomainManager(const SolverConfig& config)
 
 void DomainManager::defineScratch()
 {
-    vort.define(ba, dm, 1, n_ghost);
-    divN.define(ba, dm, 1, n_ghost);
-    vort.setVal(0.0); 
-    divN.setVal(0.0);
-    psi.define(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, 1, n_ghost);
-    psi.setVal(0.0);
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+    tag_vort.define(ba, dm, 1, n_ghost);
+    tag_divN.define(ba, dm, 1, n_ghost);
+    tag_vort.setVal(0.0); 
+    tag_divN.setVal(0.0);
+
+    for (int icomp = 0; icomp < N_VORT; ++icomp)
+    {
+        vort[icomp].define(amrex::convert(ba, TheVortEdgeVector(icomp)), dm, 1, n_ghost);
+        psi[icomp].define(amrex::convert(ba, TheVortEdgeVector(icomp)), dm, 1, n_ghost);
+
+        vort[icomp].setVal(0.0);
+        psi[icomp].setVal(0.0);
+    }
+
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
         amrex::BoxArray ba_face = amrex::convert(ba, amrex::IntVect::TheDimensionVector(idim));
         vel_refresh_err[idim].define(ba_face, dm, 1, 0);
         vel_refresh_err[idim].setVal(0.0);
@@ -115,12 +126,26 @@ void DomainManager::initializeSnugDomain()
     // tagging use tag information to update Geom, BoxArr, DistMap; IMPORTANT:
     // refine Geom, BoxArr and DistMap to match desired resolution
 
+    // compute vorticity field in search domain
+    amrex::Array<amrex::MultiFab, N_VORT> search_vort;
+    for (int icomp = 0; icomp < N_VORT; ++icomp)
+    {
+        search_vort[icomp].define(amrex::convert(ba, TheVortEdgeVector(icomp)), dm, n_comp, n_ghost);
+    }
+
+    // compute discrete divergence free vorticity field
+    fluxAverageVorticity(search_vort, geom);
+
     // create FlowField data using search params
     FlowField search_state(geom, ba, dm, n_comp, n_ghost);
 
-    // initializing coarse search domain with velocity
-    initializeVelField(search_state);
-    search_state.setBoundary();
+    // setting supp_ba to ba so that everything in the domain is computed
+    supp_ba = ba;
+
+    // initializing coarse search domain with velocity using vor2vel
+    LGFOpenBC search_poisson_solver(geom, ba, n_lookup, n_ghost_max, 1);
+    vor2vel(search_state.getVelArr(), search_vort, search_poisson_solver);
+    // setBoundary() call not needed as vor2vel handles ghost cells as well
 
     computeSuppBoxArr(search_state, false); // can't shed outer layer as it has never been tagged before
 
@@ -135,6 +160,33 @@ void DomainManager::initializeSnugDomain()
 
     // redefine scratch variables onto new grid
     defineScratch();
+}
+
+void DomainManager::initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poisson_solver)
+{
+    // setting supp_ba as ba to initialize everywhere in the domain
+    supp_ba = ba;
+
+    // compute vorticity field in initializing domain
+    amrex::Array<amrex::MultiFab, N_VORT> init_vort;
+    for (int icomp = 0; icomp < N_VORT; ++icomp)
+    {
+        init_vort[icomp].define(amrex::convert(ba, TheVortEdgeVector(icomp)), dm, n_comp, n_ghost);
+    }
+
+    // compute discrete divergence free vorticity field
+    fluxAverageVorticity(init_vort, geom);
+
+    // computing refresh in full ba
+    vor2vel(init_state.getVelArr(), init_vort, lgf_poisson_solver);
+
+    // restoring supp_ba to the one that ba was built on
+    supp_ba = old_supp_ba;
+
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        vel_refresh_err[idim].setVal(0.0);
+    }
 }
 
 void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba)
@@ -167,10 +219,10 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
     // run if the old and new supp_ba are on different refinement levels or if 
     // there is no old supp_ba, like in the first initialization call
 
-    // this call is feasible because we ensure that at any given time, vort,
-    // divN and state.getPres() all live on the same ba and dm
-    vort = computePlotVorticity(state);
-    divN = computeDivNonLinearTerm(state);
+    // this call is feasible because we ensure that at any given time, tag_vort,
+    // tag_divN and state.getPres() all live on the same ba and dm
+    tag_vort = computeTagVorticity(state);
+    tag_divN = computeDivNonLinearTerm(state);
 
     // add an if(not_initialization) branch to zero all of the outermost buffer layer's cells by a 
     // specified number of boxes
@@ -179,35 +231,35 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
         amrex::BoxArray xsoln_ba_without_outer = supp_ba;
         growBoxArr(xsoln_ba_without_outer, (n_buffer_box - n_shed_box) * max_grid_size, max_grid_size);
 
-        // loop over vort and divN, zeroing all cells that are outside this layer
-        for (amrex::MFIter mfi(divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        // loop over tag_vort and tag_divN, zeroing all cells that are outside this layer
+        for (amrex::MFIter mfi(tag_divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box& bx = mfi.tilebox();
             if(xsoln_ba_without_outer.contains(mfi.validbox())) { continue; }
 
-            auto const& divN_arr = divN.array(mfi);
-            auto const& vort_plt_arr = vort.array(mfi);
+            auto const& tag_divN_arr = tag_divN.array(mfi);
+            auto const& tag_vort_arr = tag_vort.array(mfi);
             
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
-                divN_arr(i, j, k) = 0.0;
-                vort_plt_arr(i, j, k) = 0.0;
+                tag_divN_arr(i, j, k) = 0.0;
+                tag_vort_arr(i, j, k) = 0.0;
             });
         }
     }
 
     // normalize vorticity by its global max (DECIDE: 3D magnitude, not comp 0)
-    amrex::Real vort_max_norm = vort.norm0(0, 0, false);
+    amrex::Real vort_max_norm = tag_vort.norm0(0, 0, false);
     if (vort_max_norm > 0.0)
     {
-        vort.mult(1.0 / vort_max_norm, 0, 1, vort.nGrow());
+        tag_vort.mult(1.0 / vort_max_norm, 0, 1, tag_vort.nGrow());
     }
 
     // normalize lamb-divergence by its global max
-    amrex::Real divN_max_norm = divN.norm0(0, 0, false);
+    amrex::Real divN_max_norm = tag_divN.norm0(0, 0, false);
     if (divN_max_norm > 0.0)
     {
-        divN.mult(1.0 / divN_max_norm, 0, 1, divN.nGrow());
+        tag_divN.mult(1.0 / divN_max_norm, 0, 1, tag_divN.nGrow());
     }
 
     // create a tagging criterion for "where the action is"
@@ -230,14 +282,14 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
     });
 
     // local copy for GPU lambda
-    auto const& vort_arrs = vort.const_arrays();   // MultiArray4: all local boxes
-    auto const& divN_arrs = divN.const_arrays();
+    auto const& tag_vort_arrs = tag_vort.const_arrays();   // MultiArray4: all local boxes
+    auto const& tag_divN_arrs = tag_divN.const_arrays();
     amrex::Real tag_thresh = supp_tag_eps;
 
-    amrex::ParallelFor(divN, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
+    amrex::ParallelFor(tag_divN, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
     {
         if (d_flags_ptr[box_no] != 0) return;   // early-out, now indexed by box_no
-        if (amrex::max(amrex::Math::abs(vort_arrs[box_no](i,j,k)), amrex::Math::abs(divN_arrs[box_no](i,j,k))) > tag_thresh)
+        if (amrex::max(amrex::Math::abs(tag_vort_arrs[box_no](i,j,k)), amrex::Math::abs(tag_divN_arrs[box_no](i,j,k))) > tag_thresh)
         {
             amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
         }
@@ -336,17 +388,56 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
 #endif
 }
 
-void DomainManager::vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver)
+template <int dim>
+void DomainManager::fillVelocityComponent(amrex::MultiFab& vel_comp,
+                                        amrex::MultiFab& vel_refresh_err_comp,
+                                        const amrex::Array<amrex::MultiFab, N_VORT>& psi,
+                                        amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx)
+{
+    // velocity can be updated to all of psi's ghost cells
+    const int ng_u = amrex::min(vel_comp.nGrow(), psi[0].nGrow());
+
+    for (amrex::MFIter mfi(vel_comp, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box bx  = mfi.growntilebox(ng_u);   // valid + ghosts
+        const amrex::Box vbx = mfi.tilebox();            // valid only
+
+        auto const& u = vel_comp.array(mfi);
+        auto const& e = vel_refresh_err_comp.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, N_VORT> p;
+        for (int c = 0; c < N_VORT; ++c)
+        {
+            p[c] = psi[c].const_array(mfi);
+        }
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            const amrex::Real u_new = -discreteCurlE2F<dim>(i, j, k, invdx, p);
+            if (vbx.contains(amrex::IntVect(AMREX_D_DECL(i, j, k))))
+            {
+                e(i,j,k) = u_new - u(i,j,k);
+            }
+
+            u(i,j,k) = u_new;
+        });
+    }
+}
+
+template <int... dim>
+void DomainManager::fillVelocity(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                    amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_refresh_err,
+                    const amrex::Array<amrex::MultiFab, N_VORT>& psi,
+                    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                    std::integer_sequence<int, dim...>)
+{
+    (fillVelocityComponent<dim>(vel[dim], vel_refresh_err[dim],psi, invdx), ...);
+}
+
+void DomainManager::vor2vel(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_arr,
+                            amrex::Array<amrex::MultiFab, N_VORT>& vort,
+                            LGFOpenBC& lgf_poisson_solver)
 {
     BL_PROFILE("<Compute> DomainManager::vor2vel()");
-
-    // extract nodal vorticity
-    amrex::MultiFab vort_nd = computeNodalVorticity(state);
-
-    // allocate target multifab
-    psi.define(vort_nd.boxArray(), vort_nd.DistributionMap(), 1, vort_nd.nGrow());
-    psi.setVal(0.0);// compute streamfunction ONLY on buffer nodes
-    vort_nd.mult(-1.0); // source term is -omega_z
 
     // create intersection of supp_ba and old_supp_ba, for the vorticity that
     // must be considered for the streamfunction compute
@@ -355,66 +446,37 @@ void DomainManager::vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solve
     {
         tag_ba = amrex::intersect(old_supp_ba, supp_ba);
     }
-    
-    // compute streamfunction using poisson solve
-    lgf_nodal_poisson_solver.solvePoisson(vort_nd, psi, tag_ba);
-    psi.FillBoundary(geom.periodicity());
 
     // initialize error multifab to zero
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
     {
-        vel_refresh_err[idim].define(state.getVel(idim).boxArray(),
-                                        state.getVel(idim).DistributionMap(), 1, 0);
+        vel_refresh_err[idim].define(vel_arr[idim].boxArray(),vel_arr[idim].DistributionMap(), 1, 0);
         vel_refresh_err[idim].setVal(0.0);
     }
 
-    // update velocities in Dbuff
+    // find dx, dy, dz for stencil operations
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
-    // X-Velocity (u = d(psi)/dy)
-    for (amrex::MFIter mfi(state.getVel(0), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    for (int icomp = 0; icomp < N_VORT; ++icomp)
     {
-        const amrex::Box& bx = mfi.tilebox();
+        // allocating psi multifabs
+        psi[icomp].define(vort[icomp].boxArray(), vort[icomp].DistributionMap(), 1, vort[icomp].nGrow());
+        // setVal(0.0) not needed as every cell, including ghost cells, is rewritten
 
-        auto const& u_arr = state.getVel(0).array(mfi);
-        auto const& psi_arr   = psi.const_array(mfi);
-        auto const& err_arr = vel_refresh_err[0].array(mfi);
-
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            amrex::Real u_refresh = (psi_arr(i, j+1, k) - psi_arr(i, j, k)) * invdx[1];
-                err_arr(i, j, k) = u_refresh - u_arr(i, j, k);
-                u_arr(i, j, k) = u_refresh;
-        });
+        // CONVENTION: The actual source term is -omega; instead of a full pass
+        // on vort multifabs, it is flipped when writing each element of
+        // velocity components
+        lgf_poisson_solver.solvePoisson(vort[icomp], psi[icomp], tag_ba);
+        // fillBoundary can be skipped here, under the guarantee that
+        // solvePoisson fills ghost cells
     }
 
-    // Y-Velocity (v = -d(psi)/dx)
-    for (amrex::MFIter mfi(state.getVel(1), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-    {
-        const amrex::Box& bx = mfi.tilebox();
+    fillVelocity(vel_arr, vel_refresh_err, psi, invdx, std::make_integer_sequence<int, AMREX_SPACEDIM>{});
 
-        auto const& v_arr = state.getVel(1).array(mfi);
-        auto const& psi_arr   = psi.const_array(mfi);
-        auto const& err_arr = vel_refresh_err[1].array(mfi);
-
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            amrex::Real v_refresh = -(psi_arr(i+1, j, k) - psi_arr(i, j, k)) * invdx[0];
-            err_arr(i, j, k) = v_refresh - v_arr(i, j, k);
-            v_arr(i, j, k) = v_refresh;
-        });
-    }
-
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        refresh_err_max_norm[idim] = vel_refresh_err[idim].norm0(0, 0, false);
-    }
-
-    // Refresh ghosts since buffer data was manually overwritten
-    state.setBoundary();
+    // setBoundary call not needed here, since refresh now updates ghost cells
 }
 
-void DomainManager::checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver, int step)
+void DomainManager::checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_poisson_solver, int step)
 {
 #ifdef ENABLE_DEBUG_CHECKS
 #ifdef AMREX_USE_MPI
@@ -481,9 +543,20 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_nod
         state = std::move(new_state);
     }
 
-    // check if a refresh is needed
+    // check and perform if a refresh is needed
     if (step % computeRegridInterval(state) == 0 || did_snug_domain_change)
     {
-        vor2vel(state, lgf_nodal_poisson_solver);
+        vort = computeVorticity(state);
+        vor2vel(state.getVelArr(), vort, lgf_poisson_solver);
+
+        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+        {
+            refresh_err_max_norm[idim] = vel_refresh_err[idim].norm0(0, 0, false);
+        }
+
+        amrex::Print() << "Velocity refresh performed!"
+                            AMREX_D_TERM(<< " | u-refresh err: " << refresh_err_max_norm[0],
+                                        << " | v-refresh err: " << refresh_err_max_norm[1],
+                                        << " | w-refresh err: " << refresh_err_max_norm[2]) << "\n";
     }
 }

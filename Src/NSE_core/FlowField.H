@@ -11,6 +11,9 @@
 
 #include <SolverConfig.H>
 #include <SpatialDiscretization.H>
+#include <InitialVorticity.H>
+
+#include <utility>
 
 using namespace amrex;
 
@@ -51,8 +54,9 @@ class FlowField
 };
 
 // free functions for convenience/plotting
-amrex::MultiFab computeNodalVorticity(const FlowField& state);
-amrex::MultiFab computePlotVorticity(const FlowField& state);
+void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex::Geometry& geom);
+amrex::Array<amrex::MultiFab, N_VORT> computeVorticity(const FlowField& state);
+amrex::MultiFab computeTagVorticity(const FlowField& state);
 amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
 void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
 amrex::MultiFab computePlotDivU(const FlowField& state);

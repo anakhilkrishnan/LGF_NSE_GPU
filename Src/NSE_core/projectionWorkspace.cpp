@@ -237,6 +237,9 @@ void ProjectionWorkspace::precomputeIFs(const amrex::Geometry& geom)
     const amrex::Real dx  = geom.CellSize(0);
     const amrex::Real dx2 = dx * dx;
     AMREX_ALWAYS_ASSERT(std::abs(geom.CellSize(1) - dx) < 1.0e-12 * dx);
+#if AMREX_SPACEDIM == 3
+    AMREX_ALWAYS_ASSERT(std::abs(geom.CellSize(2) - dx) < 1.0e-12 * dx);
+#endif
 
     if_table.resize(rk_unique_gaps.size());
 
@@ -394,6 +397,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
         { div_arr(i,j,k) = discreteDivergenceF2C(i,j,k, invdx, g_arr); });
     }
 
+    divU.FillBoundary(init_state.getGeom().periodicity());
     lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), init_supp_ba);
     init_state.getPres().mult(1.0 / (aT(1,1) * dt), 0);      // dhat -> d, Eq. (31)
     init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
@@ -458,6 +462,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i2,int j2,int k2)
             { div_arr(i2,j2,k2) = discreteDivergenceF2C(i2,j2,k2, invdx, r_arr); });
         }
+        divU.FillBoundary(geom.periodicity());
         lgf_poisson_solver.solvePoisson(divU, stage.getPres(), tag_ba);
         stage.getPres().FillBoundary(geom.periodicity());
 

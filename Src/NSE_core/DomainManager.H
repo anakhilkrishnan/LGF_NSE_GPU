@@ -11,6 +11,10 @@
 #include <AMReX_Math.H>
 #include <AMReX_Array.H>
 #include <AMReX_BLProfiler.H>
+#include <AMReX_GpuContainers.H>
+
+#include <limits>
+#include <vector>
 
 #include <SolverConfig.H>
 #include <FlowField.H>
@@ -33,21 +37,24 @@ class DomainManager
         amrex::DistributionMapping dm;
 
         // tagging fields
-        amrex::MultiFab vort;
-        amrex::MultiFab divN;
-        
+        amrex::MultiFab tag_vort;
+        amrex::MultiFab tag_divN;
+
+        // velocity refresh fields
+        amrex::Array<amrex::MultiFab, N_VORT> vort;
+        amrex::Array<amrex::MultiFab, N_VORT> psi;
+
         // scratch variables
         amrex::BoxArray old_supp_ba;
         amrex::Gpu::DeviceVector<int> supp_tag_arr;
         amrex::Vector<int>h_tag_arr;
 
-        amrex::MultiFab psi;        
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel_refresh_err; // checks if the velocity refresh is working
 
         // inputs needed from Solver config
         int regrid_int;
 
-        int n_cell, max_grid_size, n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_comp, n_ghost;
+        int n_cell, max_grid_size, n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
         amrex::Real supp_tag_eps;
 
@@ -68,9 +75,12 @@ class DomainManager
         amrex::DistributionMapping getDistMap() const { return dm; }
         amrex::Geometry getGeom() const { return geom; }
 
-        const amrex::MultiFab& getVort() const { return vort; }
-        const amrex::MultiFab& getPsi() const { return psi; }
-        const amrex::MultiFab& getDivN() const { return divN; }
+        const amrex::MultiFab& getTagVort() const { return tag_vort; }
+        const amrex::MultiFab& getTagDivN() const { return tag_divN; }
+
+        const amrex::Array<amrex::MultiFab, N_VORT>& getVort() const { return vort; }
+        const amrex::Array<amrex::MultiFab, N_VORT>& getPsi() const { return psi; }
+
         const amrex::MultiFab& getVelRefreshErrComp(int idim) const { return vel_refresh_err[idim]; }
 
         // primary functionality
@@ -78,13 +88,25 @@ class DomainManager
         void defineScratch();
         void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain();
+        void initializeVelField(FlowField& state, LGFOpenBC& lgf_poisson_solver);
         void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
         void checkAndUpdateSnugDomain(const FlowField& state);
-        void checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver, int step);
+        void checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_poisson_solver, int step);
         
 
         // supporting functions
-        void vor2vel(FlowField& state, LGFOpenBC& lgf_nodal_poisson_solver);
+        template <int... dim>
+        void fillVelocity(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_refresh_err,
+                        const amrex::Array<amrex::MultiFab, N_VORT>& psi,
+                        amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                        std::integer_sequence<int, dim...>);
+        template <int dim>
+        void fillVelocityComponent(amrex::MultiFab& vel_comp,
+                                                amrex::MultiFab& vel_refresh_err_comp,
+                                                const amrex::Array<amrex::MultiFab, N_VORT>& psi,
+                                                amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx);
+        void vor2vel(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel_arr, amrex::Array<amrex::MultiFab, N_VORT>& vort, LGFOpenBC& lgf_poisson_solver);
 };  
 
 #endif

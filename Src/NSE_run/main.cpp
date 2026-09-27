@@ -30,12 +30,13 @@ void extendedMain()
     SolverConfig sol_cfg;
     sol_cfg.readInputs();
 
+    DomainManager dmgr(sol_cfg);
+
     // creating timestepping variables beforehand
     amrex::Real time_keeper = 0.0;
     amrex::Real dt_master = sol_cfg.set_dt; // master, not to be confused with workspace.dt
     int step_keeper = 0;
 
-    DomainManager dmgr(sol_cfg);
     
     // check if BoxArray comes from domain search and initialization, or checkpoint
     if (io_cfg.start_from_chk)
@@ -71,21 +72,13 @@ void extendedMain()
         time_keeper = sol_cfg.t_start;
         step_keeper = 0;
 
-        // starting from initial conditions
-        initializeVelField(state_n);
-
-        // fill ghost cells and apply physical BCs
-        state_n.setBoundary();
-
-        // tag to refresh supp_ba alone on the fine initialization
-        dmgr.computeSuppBoxArr(state_n, false);
+        // populate initial conditions
+        dmgr.initializeVelField(state_n, workspace.lgf_poisson_solver);
         
         // populating pressure based on divergence of Navier-Stokes at initial conditions
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
+        state_n.setBoundary();
     }
-
-    // fill ghost cells and apply physical BCs
-    state_n.setBoundary();
     
     // plotting initial conditions
     if (io_cfg.write_plot && step_keeper == 0)
@@ -161,10 +154,7 @@ void extendedMain()
         auto regrid_duration = regrid_stop_time - regrid_start_time;
 
         amrex::Print() << "Snug domain management at end of step " << step_keeper
-                        << " complete | WallTime: " << (regrid_duration) << "s"
-                        AMREX_D_TERM(<< " | u-refresh err: " << dmgr.refresh_err_max_norm[0],
-                                    << " | v-refresh err: " << dmgr.refresh_err_max_norm[1],
-                                    << " | w-refresh err: " << dmgr.refresh_err_max_norm[2]) << "\n";
+                        << " complete | WallTime: " << (regrid_duration) << "s" << "\n";
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval

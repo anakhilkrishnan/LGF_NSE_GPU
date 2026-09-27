@@ -1,6 +1,5 @@
 add_executable(nserun
                 main.cpp
-                initializeFlow.cpp
                 ioManager.cpp
                 MyFunctions.H
                 IOConfig.H

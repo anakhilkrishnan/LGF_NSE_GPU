@@ -3,6 +3,7 @@ add_library(NSE_core_lib STATIC
                 domainManager.cpp
                 flowField.cpp
                 projectionWorkspace.cpp
+                InitialVorticity.H
                 DomainManager.H
                 FlowField.H
                 ProjectionWorkspace.H

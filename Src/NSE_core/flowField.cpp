@@ -82,54 +82,155 @@ void FlowField::redefine(const amrex::Geometry& new_geom, const amrex::BoxArray&
     pres.setVal(0.0);
 }
 
-// computes nodal vorticity for vor2vel(), via the discreteCurlF2E.
-amrex::MultiFab computeNodalVorticity(const FlowField& state)
+// initialization procedure to ensure div(omega_0) = 0 is actually upheld discretely
+void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex::Geometry& geom)
 {
-    // IMPORTANT: Limited to 2D at present
-    BL_PROFILE("<Compute> computeNodalVorticity()")
+    const auto dx = geom.CellSizeArray();
+    const auto lo = geom.ProbLoArray();
+
+    // 4-point Gauss-Legendre on [-1/2, 1/2]; weights sum to 1, so the sum is the average
+    const amrex::GpuArray<amrex::Real, 4> qx = {-0.4305681557970263, -0.1699905217924281,
+                                                  0.1699905217924281,  0.4305681557970263};
+    const amrex::GpuArray<amrex::Real, 4> qw = { 0.1739274225687269,  0.3260725774312731,
+                                                  0.3260725774312731,  0.1739274225687269};
+
+    for (int c = 0; c < N_VORT; ++c)
+    {
+        const int dir = (AMREX_SPACEDIM == 2) ? 2 : c;   // physical direction of this component
+        const int d1  = (dir + 1) % 3;                   // directions spanning the dual face
+        const int d2  = (dir + 2) % 3;                   // (2D: dir = 2, so d1 = 0, d2 = 1)
+
+        for (amrex::MFIter mfi(w0[c], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        {
+            const amrex::Box bx = mfi.growntilebox();    // omega_0 is known everywhere: fill ghosts too
+            auto const& a = w0[c].array(mfi);
+
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                // edge centre: nodal in d1, d2; cell-centred in dir (3D). 2D: a node, z = 0.
+                const int ijk[3] = {i, j, k};
+                amrex::GpuArray<amrex::Real, 3> xe = {0.0, 0.0, 0.0};
+                for (int d = 0; d < AMREX_SPACEDIM; ++d) { xe[d] = lo[d] + ijk[d] * dx[d]; }
+#if AMREX_SPACEDIM == 3
+                xe[dir] += amrex::Real(0.5) * dx[dir];
+#endif
+                // average flux of omega_dir through the dual face
+                amrex::Real sum = 0.0;
+                for (int a1 = 0; a1 < 4; ++a1) {
+                    for (int a2 = 0; a2 < 4; ++a2) {
+                        amrex::GpuArray<amrex::Real, 3> xq = xe;
+                        xq[d1] += qx[a1] * dx[d1];
+                        xq[d2] += qx[a2] * dx[d2];
+                        sum += qw[a1] * qw[a2] * initialVorticity(dir, xq[0], xq[1], xq[2]);
+                    }
+                }
+                a(i,j,k) = sum;
+            });
+        }
+    }
+}
+
+// Launch the F2E curl for one vorticity component. dim is a compile-time constant here.
+template <int dim>
+void fillVorticityComponent(amrex::MultiFab& vort,
+                            const FlowField& state,
+                            amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx)
+{
+    static_assert(dim >= 0 && dim < 3, "fillVorticityComponent: dim is an edge direction (0, 1, 2)");
+    static_assert(AMREX_SPACEDIM == 3 || dim == 2, "fillVorticityComponent: 2D only has omega_z (dim = 2)");
+
+    for (amrex::MFIter mfi(vort, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& out = vort.array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
+            AMREX_D_DECL(state.getVel(0).const_array(mfi),
+                         state.getVel(1).const_array(mfi),
+                         state.getVel(2).const_array(mfi))};
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            out(i,j,k) = discreteCurlF2E<dim>(i, j, k, invdx, vel);
+        });
+    }
+}
+
+template <int... comp>
+void fillVorticity (amrex::Array<amrex::MultiFab, N_VORT>& vort,
+                    const FlowField& state,
+                    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                    std::integer_sequence<int, comp...>)
+{
+    (fillVorticityComponent<vort_dir<comp>>(vort[comp], state, invdx), ...);
+}
+
+amrex::Array<amrex::MultiFab, N_VORT> computeVorticity(const FlowField& state)
+{
+    BL_PROFILE("<Compute> computeVorticity()");
 
     const amrex::Geometry& geom = state.getGeom();
     const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
     const amrex::BoxArray& ba = state.getPres().boxArray();
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
+    const int n_ghost = state.getPres().nGrow();
 
-    // 2D: omega_z lives at NODES. One nodal MultiFab.
-    amrex::BoxArray ba_nd = amrex::convert(ba, amrex::IntVect::TheNodeVector());
-    amrex::MultiFab vort_nd(ba_nd, dm, 1, 1);
-
-    for (amrex::MFIter mfi(vort_nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    for (int idim = 0; idim < 3; ++idim) 
     {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& out = vort_nd.array(mfi);
-        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel{
-            state.getVel(0).const_array(mfi),
-            state.getVel(1).const_array(mfi)
-        };
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            out(i,j,k) = discreteCurlF2E<2>(i, j, k, invdx, vel);  // omega_z at node
-        });
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(state.getVel(idim).nGrow() >= 1,
+            "computeVorticity: velocity needs >= 1 filled ghost cell");
     }
 
-    // update ghost cells before returning
-    vort_nd.FillBoundary(geom.periodicity());
+    amrex::Array<amrex::MultiFab, N_VORT> vort;
+    for (int icomp = 0; icomp < N_VORT; ++icomp)
+    {
+        vort[icomp].define(amrex::convert(ba, TheVortEdgeVector(icomp)), dm, 1, n_ghost);
+        vort[icomp].setVal(0.0);   // ghosts outside the domain stay zero
+    }
 
-    return vort_nd;
+    fillVorticity(vort, state, invdx, std::make_integer_sequence<int, N_VORT>{});
+
+    for (int icomp = 0; icomp; ++icomp) 
+    {
+        vort[icomp].FillBoundary(geom.periodicity());
+    }
+
+    return vort;
 }
 
-// computes cell-centered vorticity for plotting
-amrex::MultiFab computePlotVorticity(const FlowField& state)
-{
-    BL_PROFILE("<Compute> computePlotVorticity()");
 
-    amrex::MultiFab vort_nd = computeNodalVorticity(state);
+
+// computes cell-averaged vorticity for tagging
+amrex::MultiFab computeTagVorticity(const FlowField& state)
+{
+    BL_PROFILE("<Compute> computeTagVorticity()");
 
     const amrex::BoxArray& ba = state.getPres().boxArray();
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
 
     amrex::MultiFab vort_cc(ba, dm, 1, 0);
-    amrex::average_node_to_cellcenter(vort_cc, 0, vort_nd, 0, 1, 0);
+
+    amrex::Array<amrex::MultiFab, N_VORT> vort_ed = computeVorticity(state);
+#if AMREX_SPACEDIM == 2
+    amrex::average_node_to_cellcenter(vort_cc, 0, vort_ed[0], 0, 1, 0);
+#endif
+#if AMREX_SPACEDIM == 3
+    amrex::Vector<const amrex::MultiFab*> vort_ed_ptrs = {&vort_ed[0], &vort_ed[1], &vort_ed[2]};
+ 
+    // average_edge_to_cellcenter writes 3 components (one per edge direction),
+    // so it needs a 3-component destination; tag on the magnitude
+    amrex::MultiFab vort_cc3(ba, dm, 3, 0);
+    amrex::average_edge_to_cellcenter(vort_cc3, 0, vort_ed_ptrs, 0);
+ 
+    auto const& out = vort_cc.arrays();
+    auto const& in  = vort_cc3.const_arrays();
+    amrex::ParallelFor(vort_cc, [=] AMREX_GPU_DEVICE (int b, int i, int j, int k) noexcept
+    {
+        const amrex::Real wx = in[b](i,j,k,0), wy = in[b](i,j,k,1), wz = in[b](i,j,k,2);
+        out[b](i,j,k) = std::sqrt(wx*wx + wy*wy + wz*wz);
+    });
+    amrex::Gpu::streamSynchronize();
+#endif 
 
     return vort_cc;
 }

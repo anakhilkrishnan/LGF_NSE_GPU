@@ -6,7 +6,31 @@
 #include <AMReX_BCRec.H>
 #include <AMReX_Math.H>
 
+#include <utility>
+
 using namespace amrex;
+
+// HELPERS for unified handling of 2D and 3D vorticity
+
+// number of vorticity components 
+inline constexpr int N_VORT = (AMREX_SPACEDIM == 2) ? 1 : 3;
+
+// edge IndexType
+inline amrex::IntVect TheVortEdgeVector(int dim)
+{
+#if AMREX_SPACEDIM == 2
+    amrex::ignore_unused(dim);
+    return amrex::IntVect::TheNodeVector();
+#elif AMREX_SPACEDIM == 3
+    return (amrex::IntVect::TheNodeVector() - amrex::IntVect::TheDimensionVector(dim));
+#endif
+}
+
+// direction index (component) for other templated functions that require dimension
+template <int comp>
+inline constexpr int vort_dir = (AMREX_SPACEDIM == 2) ? 2 : comp;
+
+
 
 // set of discrete operators used in S.Liska and T.Colonius' paper, "A fast
 // lattice Green's function method for solving viscous incompressible flows on
@@ -96,6 +120,47 @@ amrex::Real discreteCurlF2E(int i, int j, int k, amrex::GpuArray<amrex::Real, AM
         // this should never be reached
         return 0.0;
     }
+}
+
+// discrete curl C^T: edge-centered input, face-centered output
+// 3D: vec = {A_x on x-edges, A_y on y-edges, A_z on z-edges}
+// 2D: vec[0] = nodal streamfunction psi (= A_z); vec[1] is unused
+template <int dim>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+amrex::Real discreteCurlE2F(int i, int j, int k,
+                            amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
+                            amrex::GpuArray<amrex::Array4<amrex::Real const>, N_VORT> vec)
+{
+#if AMREX_SPACEDIM == 2
+    auto const& psi = vec[0];
+
+    if constexpr (dim == 0) 
+    {   // u =  dpsi/dy
+        return  (psi(i,j+1,k) - psi(i,j,k)) * invdx[1];
+    }
+    else
+    {   // v = -dpsi/dx
+        return -(psi(i+1,j,k) - psi(i,j,k)) * invdx[0];
+    }
+#elif AMREX_SPACEDIM == 3
+    auto const& ax = vec[0];
+    auto const& ay = vec[1];
+    auto const& az = vec[2];
+
+    if constexpr (dim == 0)
+    {
+        // u on x-faces
+        return ((az(i,j+1,k) - az(i,j,k)) * invdx[1]) - ((ay(i,j,k+1) - ay(i,j,k)) * invdx[2]);
+    }
+    else if constexpr (dim == 1)
+    {   // v on y-faces
+        return ((ax(i,j,k+1) - ax(i,j,k)) * invdx[2]) - ((az(i+1,j,k) - az(i,j,k)) * invdx[0]);
+    }
+    else
+    {   // w on z-faces
+        return ((ay(i+1,j,k) - ay(i,j,k)) * invdx[0]) - ((ax(i,j+1,k) - ax(i,j,k)) * invdx[1]);
+    }    
+#endif
 }
 
 // laplacian computations for a scalar field
