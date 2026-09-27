@@ -21,11 +21,6 @@
 #include <SpatialDiscretization.H>
 #include <LGFOpenBC.H>
 
-// free function: this must be defined in NSE_run
-void initializeVelField(FlowField& init_state);
-
-// IMPORTANT: At present, domainManager is wired up for 2D, see vorticity
-// management (in both tagging and vort2vel)
 class DomainManager
 {
     private:

@@ -175,7 +175,7 @@ amrex::Array<amrex::MultiFab, N_VORT> computeVorticity(const FlowField& state)
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
     const int n_ghost = state.getPres().nGrow();
 
-    for (int idim = 0; idim < 3; ++idim) 
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) 
     {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(state.getVel(idim).nGrow() >= 1,
             "computeVorticity: velocity needs >= 1 filled ghost cell");
@@ -190,7 +190,7 @@ amrex::Array<amrex::MultiFab, N_VORT> computeVorticity(const FlowField& state)
 
     fillVorticity(vort, state, invdx, std::make_integer_sequence<int, N_VORT>{});
 
-    for (int icomp = 0; icomp; ++icomp) 
+    for (int icomp = 0; icomp < N_VORT; ++icomp) 
     {
         vort[icomp].FillBoundary(geom.periodicity());
     }

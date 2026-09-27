@@ -241,8 +241,8 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     amrex::MultiFab plotFab_nd_full(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, ncomp_nd, 0);
     plotFab_nd_full.setVal(0.0);
 
-    plotFab_nd_full.ParallelCopy(dom_mgr.getPsi(), 0, 0, ncomp_vort, 0, 0);
-    plotFab_nd_full.ParallelCopy(computeVorticity(state), 0, ncomp_vort, ncomp_vort, 0, 0);
+    plotFab_nd_full.ParallelCopy(dom_mgr.getPsi()[0], 0, 0, ncomp_vort, 0, 0); // psi sign is flipped now!
+    plotFab_nd_full.ParallelCopy(computeVorticity(state)[0], 0, ncomp_vort, ncomp_vort, 0, 0);
 
     if (restrictToSupport)
     {
