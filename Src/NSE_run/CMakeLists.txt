@@ -56,6 +56,13 @@ add_custom_command(TARGET nserun POST_BUILD
 # Update the jobscript file
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_multi_rudra.sh"
+    "${BUILD_PARENT_DIR}/NSE_test/gpu_multi_rudra.sh"
+)
+
+# Update the jobscript file
+add_custom_command(TARGET nserun POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/Utils/gpu_multi.sh"
     "${BUILD_PARENT_DIR}/NSE_test/gpu_multi.sh"
     COMMENT "Syncing GPU jobscripts to Exec/NSE_test..."

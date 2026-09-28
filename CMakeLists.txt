@@ -4,7 +4,7 @@ project(LGF_NSE LANGUAGES C CXX)
 
 # typical values (included for ease of building)
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "cmake build type")
-set(AMReX_SPACEDIM "2" CACHE STRING "Spatial Dimension")
+set(AMReX_SPACEDIM "3" CACHE STRING "Spatial Dimension")
 set(AMReX_MPI YES CACHE BOOL "Enable MPI")
 set(AMReX_FFT ON CACHE BOOL "Enable FFT")
 set(AMReX_TINY_PROFILE YES CACHE BOOL "Enable Tiny Profiling")
