@@ -1,5 +1,28 @@
 #include <IOManager.H>
 
+void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& cc, int scomp)
+{
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(cc.nGrowVect().allGE(1), "averageCellToNode: cc needs >= 1 ghost");
+    constexpr amrex::Real w = amrex::Real(1.0) / amrex::Real(1 << AMREX_SPACEDIM);
+
+    for (amrex::MFIter mfi(nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const amrex::Box& bx = mfi.tilebox();
+        auto const& out = nd.array(mfi);
+        auto const& in  = cc.const_array(mfi);
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+#if AMREX_SPACEDIM == 3
+            out(i,j,k,dcomp) = w * ( in(i-1,j-1,k-1,scomp) + in(i,j-1,k-1,scomp) + in(i-1,j,k-1,scomp) + in(i,j,k-1,scomp)
+                                   + in(i-1,j-1,k  ,scomp) + in(i,j-1,k  ,scomp) + in(i-1,j,k  ,scomp) + in(i,j,k  ,scomp) );
+#else
+            out(i,j,k,dcomp) = w * ( in(i-1,j-1,k,scomp) + in(i,j-1,k,scomp) + in(i-1,j,k,scomp) + in(i,j,k,scomp) );
+#endif
+        });
+    }
+}
+
 IOManager::IOManager(const IOConfig& config) : cfg(config)
 {
     better_dir = "";
@@ -181,7 +204,6 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     
     // SECTION: FULL CC PLOTTER
     // checking total components for plotfile
-    int ncomp_vort = (AMREX_SPACEDIM == 2) ? 1 : 3;
     const int ncomp_cc = (2 * AMREX_SPACEDIM) + 5;
  
     // building full-grid assembly fabs (support + buffer). face->cc averaging
@@ -235,14 +257,16 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
                                                 "pressure", "active_box_tag", "divUAtEnd", "tag_divN", "tag_vort"};
 
     // SECTION: OTHER INDEXTYPE PLOTTER
-#if AMREX_SPACEDIM == 2
-    const int ncomp_nd = (2 * ncomp_vort);
+    const int ncomp_nd = 1;
 
     amrex::MultiFab plotFab_nd_full(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, ncomp_nd, 0);
-    plotFab_nd_full.setVal(0.0);
 
-    plotFab_nd_full.ParallelCopy(dom_mgr.getPsi()[0], 0, 0, ncomp_vort, 0, 0); // psi sign is flipped now!
-    plotFab_nd_full.ParallelCopy(computeVorticity(state)[0], 0, ncomp_vort, ncomp_vort, 0, 0);
+    amrex::MultiFab vmag_cc(ba, dm, 1, 1);
+    vmag_cc.setVal(0.0);
+    amrex::MultiFab::Copy(vmag_cc, computeTagVorticity(state), 0, 0, 1, 0);
+    vmag_cc.FillBoundary(geom.periodicity());
+    
+    averageCellToNode(plotFab_nd_full, 0, vmag_cc, 0);
 
     if (restrictToSupport)
     {
@@ -255,26 +279,16 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     amrex::MultiFab& plotFab_nd = restrictToSupport ? plotFab_nd_restricted : plotFab_nd_full;
 
     amrex::Vector<std::string> varnames_nd;
- 
-    #if AMREX_SPACEDIM == 2
-        varnames_nd.push_back("z_psi");
-        varnames_nd.push_back("z_vorticity");
-    #elif AMREX_SPACEDIM == 3
-        varnames_nd.push_back("x_psi");
-        varnames_nd.push_back("y_psi");
-        varnames_nd.push_back("z_psi");
-        varnames_nd.push_back("x_vorticity");
-        varnames_nd.push_back("y_vorticity");
-        varnames_nd.push_back("z_vorticity");
-    #endif
+#if AMREX_SPACEDIM == 2
+    varnames_nd.push_back("z_vorticity");
+#elif AMREX_SPACEDIM == 3
+    varnames_nd.push_back("vort_mag");
 #endif
  
     // SECTION: FINAL OUTPUT WRITER
     amrex::Print() << "Writing plotfiles to: " << plotfile_name << "\n";
     WriteSingleLevelPlotfile((plotfile_name + "_cc"), plotFab_cc, varnames_cc, geom, time, step);
-#if AMREX_SPACEDIM == 2
     WriteSingleLevelPlotfile((plotfile_name + "_nd"), plotFab_nd, varnames_nd, geom, time, step);
-#endif
     amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 

@@ -15,6 +15,10 @@
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
 
+
+// free function for averaging cell to node
+void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& cc, int scomp);
+
 // struct for reading status.dat files
 struct ChkStatus
 {
@@ -59,10 +63,6 @@ class IOManager
         void initializeFlowFieldFromChk(FlowField& init_state);
         void writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
                                 const FlowField& state, const DomainManager& dom_mgr);
-        void writeKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
-        void initializeWriteKEData(int step, amrex::Real time, const ProjectionWorkspace& workspace);
-        
-
 };
 
 #endif
