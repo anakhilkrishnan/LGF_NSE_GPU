@@ -7,6 +7,11 @@
 #include <AMReX_Print.H>
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_BLProfiler.H>
+
+#include <vector>
+#include <utility>
+#include <iomanip>
+#include <array>
 #include <string>
 #include <fstream>
 #include <cstdio>
@@ -62,6 +67,8 @@ class IOManager
         void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba);
         void initializeFlowFieldFromChk(FlowField& init_state);
         void writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
+                                const FlowField& state, const DomainManager& dom_mgr);
+        void writeRingDiagnostics(int step, amrex::Real time, amrex::Real dt, amrex::Real nu,
                                 const FlowField& state, const DomainManager& dom_mgr);
 };
 

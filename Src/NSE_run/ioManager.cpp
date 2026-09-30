@@ -292,5 +292,125 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     amrex::Print() << "Plotfiles written to: " << plotfile_name << "\n";
 }
 
+// GpuTuple -> std::array (for the reduction results below)
+template <typename T, std::size_t... I>
+std::array<amrex::Real, sizeof...(I)> tupleToArray (T const& t, std::index_sequence<I...>)
+{
+    return { amrex::get<I>(t)... };
+}
 
+// Per-step vortex-ring diagnostics (Liska & Colonius 2016, Eq. 55), appended to
+// <log_dir>/ring_diagnostics.txt:
+//   E = 1/2 int |w|^2,  K = int u.(x cross w),  J = int u.w,  I = 1/2 int x cross w,
+//   X = 1/2 int ((x cross w).I / |I|^2) x   (Saffman centroid; no freestream term)
+// u (faces) and w (edges) are averaged to cell centres and x is the cell centre.
+// Sums run over the support boxes only: the integrands are compact, no point is
+// counted twice, and the zero-ghost layer at the edge of D_xsoln is skipped.
+// U = dX/dt and dK/dt are left to post-processing (central differences between steps).
+void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt, amrex::Real nu,
+                                      const FlowField& state, const DomainManager& dom_mgr)
+{
+#if AMREX_SPACEDIM == 3
+    BL_PROFILE("<IO> IOManager::writeRingDiagnostics()");
 
+    const amrex::Geometry geom  = dom_mgr.getGeom();
+    const amrex::BoxArray supp_ba = dom_mgr.getSuppBoxArr();
+    const auto dx  = geom.CellSizeArray();
+    const auto plo = geom.ProbLoArray();
+    const amrex::Real dV = dx[0] * dx[1] * dx[2];
+
+    const amrex::Array<amrex::MultiFab, N_VORT> vort = computeVorticity(state);
+
+    // 15 sums (E, K, J, I[3], M[3][3] with M_ab = 1/2 int (x cross w)_a x_b) and 2 maxima (|u|, |w|)
+    using S = amrex::ReduceOpSum;
+    using M = amrex::ReduceOpMax;
+    using R = amrex::Real;
+    amrex::ReduceOps<S,S,S, S,S,S, S,S,S,S,S,S,S,S,S, M,M> reduce_op;
+    amrex::ReduceData<R,R,R, R,R,R, R,R,R,R,R,R,R,R,R, R,R> reduce_data(reduce_op);
+    using ReduceTuple = typename decltype(reduce_data)::Type;
+
+    std::vector<std::pair<int, amrex::Box>> isects;
+    for (amrex::MFIter mfi(state.getPres()); mfi.isValid(); ++mfi)
+    {
+        supp_ba.intersections(mfi.validbox(), isects);
+        if (isects.empty()) { continue; }
+
+        auto const& u  = state.getVel(0).const_array(mfi);
+        auto const& v  = state.getVel(1).const_array(mfi);
+        auto const& w  = state.getVel(2).const_array(mfi);
+        auto const& ex = vort[0].const_array(mfi);
+        auto const& ey = vort[1].const_array(mfi);
+        auto const& ez = vort[2].const_array(mfi);
+
+        for (auto const& is : isects)
+        {
+            reduce_op.eval(is.second, reduce_data, [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+            {
+                const R x[3]  = { plo[0] + (i + R(0.5)) * dx[0],
+                                  plo[1] + (j + R(0.5)) * dx[1],
+                                  plo[2] + (k + R(0.5)) * dx[2] };
+                // face -> cell centre
+                const R uc[3] = { R(0.5) * (u(i,j,k) + u(i+1,j,k)),
+                                  R(0.5) * (v(i,j,k) + v(i,j+1,k)),
+                                  R(0.5) * (w(i,j,k) + w(i,j,k+1)) };
+                // edge -> cell centre: the four edges of each direction bounding the cell
+                const R wc[3] = { R(0.25) * (ex(i,j,k) + ex(i,j+1,k) + ex(i,j,k+1) + ex(i,j+1,k+1)),
+                                  R(0.25) * (ey(i,j,k) + ey(i+1,j,k) + ey(i,j,k+1) + ey(i+1,j,k+1)),
+                                  R(0.25) * (ez(i,j,k) + ez(i+1,j,k) + ez(i,j+1,k) + ez(i+1,j+1,k)) };
+                const R xw[3] = { x[1]*wc[2] - x[2]*wc[1],
+                                  x[2]*wc[0] - x[0]*wc[2],
+                                  x[0]*wc[1] - x[1]*wc[0] };
+                const R h = R(0.5) * dV;
+                return { h  * (wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]),           // E
+                         dV * (uc[0]*xw[0] + uc[1]*xw[1] + uc[2]*xw[2]),           // K
+                         dV * (uc[0]*wc[0] + uc[1]*wc[1] + uc[2]*wc[2]),           // J
+                         h * xw[0], h * xw[1], h * xw[2],                          // I
+                         h * xw[0] * x[0], h * xw[0] * x[1], h * xw[0] * x[2],     // M row 0
+                         h * xw[1] * x[0], h * xw[1] * x[1], h * xw[1] * x[2],     // M row 1
+                         h * xw[2] * x[0], h * xw[2] * x[1], h * xw[2] * x[2],     // M row 2
+                         std::sqrt(uc[0]*uc[0] + uc[1]*uc[1] + uc[2]*uc[2]),       // |u|
+                         std::sqrt(wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]) };     // |w|
+            });
+        }
+    }
+
+    const ReduceTuple hv = reduce_data.value(reduce_op);
+    std::array<R, 17> r = tupleToArray(hv, std::make_index_sequence<17>{});
+    amrex::ParallelDescriptor::ReduceRealSum(r.data(), 15);
+    amrex::ParallelDescriptor::ReduceRealMax(r[15]);
+    amrex::ParallelDescriptor::ReduceRealMax(r[16]);
+
+    // Saffman centroid X_b = sum_a I_a M_ab / |I|^2
+    const R Ix = r[3], Iy = r[4], Iz = r[5];
+    const R I2 = Ix*Ix + Iy*Iy + Iz*Iz;
+    R X[3] = {0.0, 0.0, 0.0};
+    if (I2 > 0.0) {
+        for (int b = 0; b < 3; ++b) { X[b] = (Ix * r[6 + b] + Iy * r[9 + b] + Iz * r[12 + b]) / I2; }
+    }
+    const R cfl = r[15] * dt / amrex::min(dx[0], amrex::min(dx[1], dx[2]));
+
+    if (amrex::ParallelDescriptor::IOProcessor())
+    {
+        const std::string fname = cfg.log_dir + "/ring_diagnostics.txt";
+        const bool new_file = !amrex::FileSystem::Exists(fname);
+        if (new_file) { amrex::UtilCreateDirectory(cfg.log_dir, 0755); }
+
+        std::ofstream ofs(fname, std::ios::out | std::ios::app);
+        ofs << std::scientific << std::setprecision(16);
+        if (new_file)
+        {
+            ofs << "# Liska & Colonius (2016) Eq. 55 ring diagnostics; cell-centre sums over supp_ba\n"
+                << "# nu = " << nu << "  dx = " << dx[0] << "  dt = " << dt << "\n"
+                << "# step time dt E K J Ix Iy Iz Xx Xy Xz u_max cfl omega_max n_active n_supp\n";
+        }
+        ofs << step << ' ' << time << ' ' << dt << ' '
+            << r[0] << ' ' << r[1] << ' ' << r[2] << ' '
+            << Ix << ' ' << Iy << ' ' << Iz << ' '
+            << X[0] << ' ' << X[1] << ' ' << X[2] << ' '
+            << r[15] << ' ' << cfl << ' ' << r[16] << ' '
+            << dom_mgr.getBoxArr().numPts() << ' ' << supp_ba.numPts() << '\n';
+    }
+#else
+    amrex::ignore_unused(step, time, dt, nu, state, dom_mgr);
+#endif
+}

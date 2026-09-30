@@ -79,6 +79,9 @@ void extendedMain()
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
         state_n.setBoundary();
     }
+
+    // writing results for ring diagnostics
+    io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
     
     // plotting initial conditions
     if (io_cfg.write_plot && step_keeper == 0)
@@ -148,6 +151,9 @@ void extendedMain()
 
         // refresh flag after all dependent processes are complete
         dmgr.did_snug_domain_change = false;
+
+        // writing diagnostics
+        io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
 
         // solver time and output
         auto regrid_stop_time = amrex::second();
