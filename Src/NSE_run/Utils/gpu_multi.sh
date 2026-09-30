@@ -1,8 +1,9 @@
-#!/bin/sh
-#SBATCH --job-name=LGF_NSE_GPU_run
+#!/bin/bash
+#SBATCH --job-name=3D_LGF_NSE_GPU_run
 #SBATCH --partition=gpumultinode
-#SBATCH --nodes=2
+#SBATCH --nodes=20
 #SBATCH --ntasks-per-node=2
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:2
 #SBATCH --time=01:00:00
 #SBATCH --error=job.%J.err
@@ -11,34 +12,40 @@
 # Ensure the correctly configured CUDAROOT path is loaded
 source ~/.bashrc
 
-# Environment Initialization
-# (PARAM Pravega often utilizes 'spack load' alongside standard modules, adjust if required)
-module load openmpi/openmpi_4.0.5_ucx_cuda_11.2_with_gcc
+set -o pipefail
 
-# MPI and Networking Parameters
-export OMPI_MCA_btl_openib_allow_ib=1
-export OMPI_MCA_btl_openib_if_include="mlx5_0:1"
+# Environment
+module purge
+module load cmake/3.27.7
+module load spack/0.17
+. /home-ext/apps/spack/share/spack/setup-env.sh
+module load nvhpc/23.9-gcc-13.1.0-go44
+module load gcc/11.2.0-gcc-4.8.5-yqde
+
+export OMPI_CC=gcc OMPI_CXX=g++
+NVROOT=$(dirname $(dirname $(which nvc++)))
+MPIROOT=$NVROOT/../comm_libs/12.2/openmpi4/openmpi-4.1.5
+export PATH=$MPIROOT/bin:$PATH
+export LD_LIBRARY_PATH=$MPIROOT/lib:$LD_LIBRARY_PATH
+CUDALIBS=$NVROOT/../math_libs/12.2/targets/x86_64-linux/lib
+CUDART=$NVROOT/../cuda/12.2/targets/x86_64-linux/lib
+export LD_LIBRARY_PATH=$MPIROOT/lib:$CUDALIBS:$CUDART:$LD_LIBRARY_PATH
+
+# MPI / UCX
 export OMP_NUM_THREADS=1
 
-# OpenMPI parameters
-export OMPI_MCA_pml=ucx
-export OMPI_MCA_osc=ucx
-export UCX_TLS=rc,sm,cuda_copy,cuda_ipc
-export UCX_MEMTYPE_CACHE=n
-export UCX_RNDV_THRESH=8192
-export AMREX_USE_GPU_AWARE_MPI=1
+# AMReX Arguments
+AMREX_ARGS="amrex.abort_on_out_of_gpu_memory=1  amrex.use_gpu_aware_mpi=1"
 
 ulimit -s unlimited
 cd $SLURM_SUBMIT_DIR
+mkdir -p Logs Results
 
 EXEC="./nserun"
 INPUTS_FILE="inputs"
 
-cat > select_gpu.sh <<'EOF'
-#!/bin/bash
-export CUDA_VISIBLE_DEVICES=$OMPI_COMM_WORLD_LOCAL_RANK
-exec "$@"
-EOF
-chmod +x select_gpu.sh
+if ldd $EXEC | grep -q "not found"; then
+    echo "UNRESOLVED:"; ldd $EXEC | grep "not found"; exit 1
+fi
 
-mpiexec -n $SLURM_NTASKS ./select_gpu.sh $EXEC $INPUTS_FILE
+mpiexec -n $SLURM_NTASKS --map-by socket --bind-to socket $EXEC $INPUTS_FILE $AMREX_ARGS | tee ./Logs/log_vortexring.txt
