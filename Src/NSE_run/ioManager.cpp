@@ -299,6 +299,10 @@ std::array<amrex::Real, sizeof...(I)> tupleToArray (T const& t, std::index_seque
     return { amrex::get<I>(t)... };
 }
 
+// Comment out to drop the lower-half sums (only meaningful for the colliding-rings case).
+// They give the Saffman centroid of the ring in z < z_split, i.e. its approach speed.
+#define RING_DIAG_LOWER_HALF
+
 // Per-step vortex-ring diagnostics (Liska & Colonius 2016, Eq. 55), appended to
 // <log_dir>/ring_diagnostics.txt:
 //   E = 1/2 int |w|^2,  K = int u.(x cross w),  J = int u.w,  I = 1/2 int x cross w,
@@ -325,8 +329,17 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
     using S = amrex::ReduceOpSum;
     using M = amrex::ReduceOpMax;
     using R = amrex::Real;
+#ifdef RING_DIAG_LOWER_HALF
+    // + 12 sums over z < z_split (I[3], M[3][3]), appended after the maxima
+    constexpr R z_split = 0.0;
+    amrex::ReduceOps<S,S,S, S,S,S, S,S,S,S,S,S,S,S,S, M,M, S,S,S, S,S,S,S,S,S,S,S,S> reduce_op;
+    amrex::ReduceData<R,R,R, R,R,R, R,R,R,R,R,R,R,R,R, R,R, R,R,R, R,R,R,R,R,R,R,R,R> reduce_data(reduce_op);
+    constexpr int NR = 29;
+#else
     amrex::ReduceOps<S,S,S, S,S,S, S,S,S,S,S,S,S,S,S, M,M> reduce_op;
     amrex::ReduceData<R,R,R, R,R,R, R,R,R,R,R,R,R,R,R, R,R> reduce_data(reduce_op);
+    constexpr int NR = 17;
+#endif
     using ReduceTuple = typename decltype(reduce_data)::Type;
 
     std::vector<std::pair<int, amrex::Box>> isects;
@@ -361,24 +374,45 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
                                   x[2]*wc[0] - x[0]*wc[2],
                                   x[0]*wc[1] - x[1]*wc[0] };
                 const R h = R(0.5) * dV;
-                return { h  * (wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]),           // E
-                         dV * (uc[0]*xw[0] + uc[1]*xw[1] + uc[2]*xw[2]),           // K
-                         dV * (uc[0]*wc[0] + uc[1]*wc[1] + uc[2]*wc[2]),           // J
-                         h * xw[0], h * xw[1], h * xw[2],                          // I
-                         h * xw[0] * x[0], h * xw[0] * x[1], h * xw[0] * x[2],     // M row 0
-                         h * xw[1] * x[0], h * xw[1] * x[1], h * xw[1] * x[2],     // M row 1
-                         h * xw[2] * x[0], h * xw[2] * x[1], h * xw[2] * x[2],     // M row 2
-                         std::sqrt(uc[0]*uc[0] + uc[1]*uc[1] + uc[2]*uc[2]),       // |u|
-                         std::sqrt(wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]) };     // |w|
+#ifdef RING_DIAG_LOWER_HALF
+                const R hl = (x[2] < z_split) ? h : R(0.0);
+#endif
+                return {h * (wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]),           // E
+                            dV * (uc[0]*xw[0] + uc[1]*xw[1] + uc[2]*xw[2]),           // K
+                            dV * (uc[0]*wc[0] + uc[1]*wc[1] + uc[2]*wc[2]),           // J
+                            h * xw[0], h * xw[1], h * xw[2],                          // I
+                            h * xw[0] * x[0], h * xw[0] * x[1], h * xw[0] * x[2],     // M row 0
+                            h * xw[1] * x[0], h * xw[1] * x[1], h * xw[1] * x[2],     // M row 1
+                            h * xw[2] * x[0], h * xw[2] * x[1], h * xw[2] * x[2],     // M row 2
+                            std::sqrt(uc[0]*uc[0] + uc[1]*uc[1] + uc[2]*uc[2]),       // |u|
+                            std::sqrt(wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2])     // |w|
+#ifdef RING_DIAG_LOWER_HALF
+                            , hl * xw[0], hl * xw[1], hl * xw[2],                       // I, z < z_split
+                            hl * xw[0] * x[0], hl * xw[0] * x[1], hl * xw[0] * x[2],  // M row 0, z < z_split
+                            hl * xw[1] * x[0], hl * xw[1] * x[1], hl * xw[1] * x[2],  // M row 1, z < z_split
+                            hl * xw[2] * x[0], hl * xw[2] * x[1], hl * xw[2] * x[2]   // M row 2, z < z_split
+#endif
+                        };
             });
         }
     }
 
     const ReduceTuple hv = reduce_data.value(reduce_op);
-    std::array<R, 17> r = tupleToArray(hv, std::make_index_sequence<17>{});
+    std::array<R, NR> r = tupleToArray(hv, std::make_index_sequence<NR>{});
     amrex::ParallelDescriptor::ReduceRealSum(r.data(), 15);
     amrex::ParallelDescriptor::ReduceRealMax(r[15]);
     amrex::ParallelDescriptor::ReduceRealMax(r[16]);
+
+#ifdef RING_DIAG_LOWER_HALF
+    amrex::ParallelDescriptor::ReduceRealSum(r.data() + 17, 12);
+    const R Ilx = r[17], Ily = r[18], Ilz = r[19];
+    const R Il2 = Ilx*Ilx + Ily*Ily + Ilz*Ilz;
+    R Xl[3] = {0.0, 0.0, 0.0};
+    if (Il2 > 0.0) 
+    {
+        for (int b = 0; b < 3; ++b) { Xl[b] = (Ilx * r[20 + b] + Ily * r[23 + b] + Ilz * r[26 + b]) / Il2; }
+    }
+#endif
 
     // Saffman centroid X_b = sum_a I_a M_ab / |I|^2
     const R Ix = r[3], Iy = r[4], Iz = r[5];
@@ -401,14 +435,22 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
         {
             ofs << "# Liska & Colonius (2016) Eq. 55 ring diagnostics; cell-centre sums over supp_ba\n"
                 << "# nu = " << nu << "  dx = " << dx[0] << "  dt = " << dt << "\n"
-                << "# step time dt E K J Ix Iy Iz Xx Xy Xz u_max cfl omega_max n_active n_supp\n";
+                << "# step time dt E K J Ix Iy Iz Xx Xy Xz u_max cfl omega_max n_active n_supp"
+#ifdef RING_DIAG_LOWER_HALF
+                << " Il_x Il_y Il_z Xl_x Xl_y Xl_z"
+#endif
+                << "\n";
         }
         ofs << step << ' ' << time << ' ' << dt << ' '
             << r[0] << ' ' << r[1] << ' ' << r[2] << ' '
             << Ix << ' ' << Iy << ' ' << Iz << ' '
             << X[0] << ' ' << X[1] << ' ' << X[2] << ' '
             << r[15] << ' ' << cfl << ' ' << r[16] << ' '
-            << dom_mgr.getBoxArr().numPts() << ' ' << supp_ba.numPts() << '\n';
+            << dom_mgr.getBoxArr().numPts() << ' ' << supp_ba.numPts()
+#ifdef RING_DIAG_LOWER_HALF
+            << ' ' << Ilx << ' ' << Ily << ' ' << Ilz << ' ' << Xl[0] << ' ' << Xl[1] << ' ' << Xl[2]
+#endif
+            << '\n';
     }
 #else
     amrex::ignore_unused(step, time, dt, nu, state, dom_mgr);
