@@ -11,25 +11,10 @@
 
 # Ensure the correctly configured CUDAROOT path is loaded
 source ~/.bashrc
-
 set -o pipefail
 
-# Environment
-module purge
-module load cmake/3.27.7
-module load spack/0.17
-. /home-ext/apps/spack/share/spack/setup-env.sh
-module load nvhpc/23.9-gcc-13.1.0-go44
-module load gcc/11.2.0-gcc-4.8.5-yqde
-
-NVROOT=$(dirname $(dirname $(which nvc++)))
-MPIROOT=$NVROOT/../comm_libs/12.2/openmpi4/openmpi-4.1.5
-CUDALIBS=$NVROOT/../math_libs/12.2/targets/x86_64-linux/lib
-CUDART=$NVROOT/../cuda/12.2/targets/x86_64-linux/lib
-export PATH=$MPIROOT/bin:$PATH
-export LD_LIBRARY_PATH=$MPIROOT/lib:$CUDALIBS:$CUDART:$LD_LIBRARY_PATH
-
-export CC=gcc CXX=g++ CUDAHOSTCXX=g++ OMPI_CC=gcc OMPI_CXX=g++
+# Load Pravega environment for Akhil
+source "$HOME/env-pravega.sh" || exit 1
 
 # MPI / UCX
 export OMP_NUM_THREADS=1
