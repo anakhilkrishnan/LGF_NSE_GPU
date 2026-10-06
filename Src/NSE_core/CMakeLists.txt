@@ -3,7 +3,6 @@ add_library(NSE_core_lib STATIC
                 domainManager.cpp
                 flowField.cpp
                 projectionWorkspace.cpp
-                InitialVorticity.H
                 DomainManager.H
                 FlowField.H
                 ProjectionWorkspace.H
@@ -18,6 +17,9 @@ endif()
 
 # Tell CMake where the headers (like LGFCore.H) are
 target_include_directories(NSE_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Direct CMake to NSE_run headers, namely InitialVorticity and FreestreamVelocity
+target_include_directories(NSE_core_lib PUBLIC ${PROJECT_SOURCE_DIR}/Src/NSE_run)
 
 # Link to AMReX so the core knows about MultiFabs and MPI
 target_link_libraries(NSE_core_lib PUBLIC LGF_core_lib AMReX::amrex)

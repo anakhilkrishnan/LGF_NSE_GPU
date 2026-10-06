@@ -1,6 +1,8 @@
 add_executable(nserun
                 main.cpp
                 ioManager.cpp
+                InitialVorticity.H
+                FreestreamVelocity.H
                 MyFunctions.H
                 IOConfig.H
                 IOManager.H)
