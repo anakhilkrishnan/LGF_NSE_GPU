@@ -1,4 +1,5 @@
 #include <ProjectionWorkspace.H>
+#include <FreestreamVelocity.H>
 
 ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config)
     : stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost), lgf_poisson_solver(geom_in, ba_in, config.n_lookup, config.n_ghost_max)
@@ -334,13 +335,14 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
 // 5.  g^i = -a~_{i,i} dt Ntilde(u^{i-1})   ->  slot i
 // ---------------------------------------------------------------------------
 
-void ProjectionWorkspace::computeGStage(const FlowField& st, int i)
+void ProjectionWorkspace::computeGStage(const FlowField& st, int i, amrex::Real t_stage)
 {
     BL_PROFILE("<Compute> computeGStage()");
 
     const amrex::Geometry& geom = st.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
     const amrex::Real coef = -aT(i,i) * dt;
+    const auto uinf = freestreamVelocity(t_stage);     // uniform: evaluated once, on the host
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
@@ -356,15 +358,15 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i)
 
             if (idim == 0) {
                 amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i2,int j2,int k2)
-                { g_arr(i2,j2,k2) = coef * nonLinearTerm<0>(i2,j2,k2, invdx, vel); });
+                { g_arr(i2,j2,k2) = coef * nonLinearTerm<0>(i2,j2,k2, invdx, vel, uinf); });
             } else if (idim == 1) {
                 amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i2,int j2,int k2)
-                { g_arr(i2,j2,k2) = coef * nonLinearTerm<1>(i2,j2,k2, invdx, vel); });
+                { g_arr(i2,j2,k2) = coef * nonLinearTerm<1>(i2,j2,k2, invdx, vel, uinf); });
             }
 #if AMREX_SPACEDIM == 3
             else {
                 amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i2,int j2,int k2)
-                { g_arr(i2,j2,k2) = coef * nonLinearTerm<2>(i2,j2,k2, invdx, vel); });
+                { g_arr(i2,j2,k2) = coef * nonLinearTerm<2>(i2,j2,k2, invdx, vel, uinf); });
             }
 #endif
         }
@@ -372,7 +374,8 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i)
 }
 
 void ProjectionWorkspace::initializePresField(FlowField& init_state,
-                                              const amrex::BoxArray& init_supp_ba)
+                                              const amrex::BoxArray& init_supp_ba,
+                                              amrex::Real time)
 {
     BL_PROFILE("<Setup> initializePresField()");
 
@@ -381,7 +384,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
     // the initial plotfile and smoke-tests the Poisson path.
     init_state.setBoundary();
 
-    computeGStage(init_state, 1);          // w[1] = -a~_11 dt Ntilde(u_0)
+    computeGStage(init_state, 1, time);    // w[1] = -a~_11 dt Ntilde(u_0, t_0)
 
     divU.setVal(0.0);
     const auto invdx = init_state.getGeom().InvCellSizeArray();
@@ -413,7 +416,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
 // ---------------------------------------------------------------------------
 
 void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in,
-                                          const amrex::BoxArray& supp_ba)
+                                          const amrex::BoxArray& supp_ba, amrex::Real time_n)
 {
     BL_PROFILE("<Compute> advanceTimeStep()");
 
@@ -430,8 +433,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     for (int i = 1; i <= rk_stages; ++i)
     {
         // --- g^i into slot i.  Fresh; never aged.  Eq. (28) ----------------
+        // u^{i-1} lives at t_n + c~_{i-1} dt (c~_0 = 0): N is evaluated there
+        const amrex::Real t_stage = time_n + ((i == 1) ? 0.0 : cT(i-1)) * dt;
         stage.setBoundary();
-        computeGStage(stage, i);
+        computeGStage(stage, i, t_stage);
 
         // --- age q and w[1..i-1] by H^{i-1}.  Eqs. (29), (30) --------------
         if (i > 1)

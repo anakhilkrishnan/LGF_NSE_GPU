@@ -1,4 +1,7 @@
 #include <IOManager.H>
+#include <FreestreamVelocity.H>
+
+#include <limits>
 
 void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& cc, int scomp)
 {
@@ -260,6 +263,7 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     const int ncomp_nd = 1;
 
     amrex::MultiFab plotFab_nd_full(amrex::convert(ba, amrex::IntVect::TheNodeVector()), dm, ncomp_nd, 0);
+    plotFab_nd_full.setVal(0.0);
 
     amrex::MultiFab vmag_cc(ba, dm, 1, 1);
     vmag_cc.setVal(0.0);
@@ -280,7 +284,7 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
 
     amrex::Vector<std::string> varnames_nd;
 #if AMREX_SPACEDIM == 2
-    varnames_nd.push_back("z_vorticity");
+    varnames_nd.push_back("vort");
 #elif AMREX_SPACEDIM == 3
     varnames_nd.push_back("vort_mag");
 #endif
@@ -299,9 +303,8 @@ std::array<amrex::Real, sizeof...(I)> tupleToArray (T const& t, std::index_seque
     return { amrex::get<I>(t)... };
 }
 
-// Comment out to drop the lower-half sums (only meaningful for the colliding-rings case).
-// They give the Saffman centroid of the ring in z < z_split, i.e. its approach speed.
-#define RING_DIAG_LOWER_HALF
+// Lower-half sums (Saffman centroid of the ring in z < z_split, i.e. its approach speed) are
+// compiled in when the case header (InitialVorticity.H) defines RING_DIAG_LOWER_HALF.
 
 // Per-step vortex-ring diagnostics (Liska & Colonius 2016, Eq. 55), appended to
 // <log_dir>/ring_diagnostics.txt:
@@ -322,6 +325,11 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
     const auto dx  = geom.CellSizeArray();
     const auto plo = geom.ProbLoArray();
     const amrex::Real dV = dx[0] * dx[1] * dx[2];
+    // u (state) is u' = u - u_inf. Positions are measured in the fluid frame, x - s(t) with
+    // s = int_0^t u_inf, so X and its time derivative U are fluid-frame quantities (Eq. 55).
+    // E, K, J, I are unaffected (Galilean invariant for compact vorticity).
+    const auto uinf = freestreamVelocity(time);
+    const auto sinf = freestreamDisplacement(time);
 
     const amrex::Array<amrex::MultiFab, N_VORT> vort = computeVorticity(state);
 
@@ -359,9 +367,9 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
         {
             reduce_op.eval(is.second, reduce_data, [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
             {
-                const R x[3]  = { plo[0] + (i + R(0.5)) * dx[0],
-                                  plo[1] + (j + R(0.5)) * dx[1],
-                                  plo[2] + (k + R(0.5)) * dx[2] };
+                const R x[3]  = { plo[0] + (i + R(0.5)) * dx[0] - sinf[0],
+                                  plo[1] + (j + R(0.5)) * dx[1] - sinf[1],
+                                  plo[2] + (k + R(0.5)) * dx[2] - sinf[2] };
                 // face -> cell centre
                 const R uc[3] = { R(0.5) * (u(i,j,k) + u(i+1,j,k)),
                                   R(0.5) * (v(i,j,k) + v(i,j+1,k)),
@@ -377,22 +385,23 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
 #ifdef RING_DIAG_LOWER_HALF
                 const R hl = (x[2] < z_split) ? h : R(0.0);
 #endif
-                return {h * (wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]),           // E
-                            dV * (uc[0]*xw[0] + uc[1]*xw[1] + uc[2]*xw[2]),           // K
-                            dV * (uc[0]*wc[0] + uc[1]*wc[1] + uc[2]*wc[2]),           // J
-                            h * xw[0], h * xw[1], h * xw[2],                          // I
-                            h * xw[0] * x[0], h * xw[0] * x[1], h * xw[0] * x[2],     // M row 0
-                            h * xw[1] * x[0], h * xw[1] * x[1], h * xw[1] * x[2],     // M row 1
-                            h * xw[2] * x[0], h * xw[2] * x[1], h * xw[2] * x[2],     // M row 2
-                            std::sqrt(uc[0]*uc[0] + uc[1]*uc[1] + uc[2]*uc[2]),       // |u|
-                            std::sqrt(wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2])     // |w|
+                return { h  * (wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2]),           // E
+                         dV * (uc[0]*xw[0] + uc[1]*xw[1] + uc[2]*xw[2]),           // K
+                         dV * (uc[0]*wc[0] + uc[1]*wc[1] + uc[2]*wc[2]),           // J
+                         h * xw[0], h * xw[1], h * xw[2],                          // I
+                         h * xw[0] * x[0], h * xw[0] * x[1], h * xw[0] * x[2],     // M row 0
+                         h * xw[1] * x[0], h * xw[1] * x[1], h * xw[1] * x[2],     // M row 1
+                         h * xw[2] * x[0], h * xw[2] * x[1], h * xw[2] * x[2],     // M row 2
+                         std::sqrt((uc[0]+uinf[0])*(uc[0]+uinf[0]) + (uc[1]+uinf[1])*(uc[1]+uinf[1])
+                                 + (uc[2]+uinf[2])*(uc[2]+uinf[2])),                   // |u' + u_inf| (grid CFL)
+                         std::sqrt(wc[0]*wc[0] + wc[1]*wc[1] + wc[2]*wc[2])        // |w|
 #ifdef RING_DIAG_LOWER_HALF
-                            , hl * xw[0], hl * xw[1], hl * xw[2],                       // I, z < z_split
-                            hl * xw[0] * x[0], hl * xw[0] * x[1], hl * xw[0] * x[2],  // M row 0, z < z_split
-                            hl * xw[1] * x[0], hl * xw[1] * x[1], hl * xw[1] * x[2],  // M row 1, z < z_split
-                            hl * xw[2] * x[0], hl * xw[2] * x[1], hl * xw[2] * x[2]   // M row 2, z < z_split
+                       , hl * xw[0], hl * xw[1], hl * xw[2],                       // I, z < z_split
+                         hl * xw[0] * x[0], hl * xw[0] * x[1], hl * xw[0] * x[2],  // M row 0, z < z_split
+                         hl * xw[1] * x[0], hl * xw[1] * x[1], hl * xw[1] * x[2],  // M row 1, z < z_split
+                         hl * xw[2] * x[0], hl * xw[2] * x[1], hl * xw[2] * x[2]   // M row 2, z < z_split
 #endif
-                        };
+                       };
             });
         }
     }
@@ -403,13 +412,16 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
     amrex::ParallelDescriptor::ReduceRealMax(r[15]);
     amrex::ParallelDescriptor::ReduceRealMax(r[16]);
 
+    // A centroid needs a nonzero impulse. With zero total impulse (e.g. two colliding rings)
+    // I is round-off, ~1e-15 in Gamma0 R0^2 units, and M/I would be garbage: write nan instead.
+    constexpr R I2_min = 1.0e-20;
+    const R nan_R = std::numeric_limits<R>::quiet_NaN();
 #ifdef RING_DIAG_LOWER_HALF
     amrex::ParallelDescriptor::ReduceRealSum(r.data() + 17, 12);
     const R Ilx = r[17], Ily = r[18], Ilz = r[19];
     const R Il2 = Ilx*Ilx + Ily*Ily + Ilz*Ilz;
-    R Xl[3] = {0.0, 0.0, 0.0};
-    if (Il2 > 0.0) 
-    {
+    R Xl[3] = {nan_R, nan_R, nan_R};
+    if (Il2 > I2_min) {
         for (int b = 0; b < 3; ++b) { Xl[b] = (Ilx * r[20 + b] + Ily * r[23 + b] + Ilz * r[26 + b]) / Il2; }
     }
 #endif
@@ -417,8 +429,8 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
     // Saffman centroid X_b = sum_a I_a M_ab / |I|^2
     const R Ix = r[3], Iy = r[4], Iz = r[5];
     const R I2 = Ix*Ix + Iy*Iy + Iz*Iz;
-    R X[3] = {0.0, 0.0, 0.0};
-    if (I2 > 0.0) {
+    R X[3] = {nan_R, nan_R, nan_R};
+    if (I2 > I2_min) {
         for (int b = 0; b < 3; ++b) { X[b] = (Ix * r[6 + b] + Iy * r[9 + b] + Iz * r[12 + b]) / I2; }
     }
     const R cfl = r[15] * dt / amrex::min(dx[0], amrex::min(dx[1], dx[2]));
@@ -434,6 +446,7 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
         if (new_file)
         {
             ofs << "# Liska & Colonius (2016) Eq. 55 ring diagnostics; cell-centre sums over supp_ba\n"
+                << "# X in the fluid frame (x - int_0^t u_inf); lab position = X + s(t). u_max = max|u' + u_inf|\n"
                 << "# nu = " << nu << "  dx = " << dx[0] << "  dt = " << dt << "\n"
                 << "# step time dt E K J Ix Iy Iz Xx Xy Xz u_max cfl omega_max n_active n_supp"
 #ifdef RING_DIAG_LOWER_HALF

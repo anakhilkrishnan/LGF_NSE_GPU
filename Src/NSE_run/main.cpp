@@ -7,6 +7,9 @@ int main(int argc, char* argv[])
     amrex::Initialize(argc,argv);
 
     amrex::Print() << "Launching LGF-NSE solver..." << "\n";
+#ifdef NSE_CASE_NAME
+    amrex::Print() << "Case: " << NSE_CASE_NAME << "\n";
+#endif
     extendedMain();
 
     amrex::Finalize();
@@ -49,7 +52,7 @@ void extendedMain()
     else
     {
         // extract correct region and update geom, boxarr and distmap
-        dmgr.initializeSnugDomain();
+        dmgr.initializeSnugDomain(sol_cfg.t_start);
     }
 
     // create flow field object
@@ -76,13 +79,12 @@ void extendedMain()
         dmgr.initializeVelField(state_n, workspace.lgf_poisson_solver);
         
         // populating pressure based on divergence of Navier-Stokes at initial conditions
-        workspace.initializePresField(state_n, dmgr.getSuppBoxArr());
+        workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
     }
-
-    // writing results for ring diagnostics
-    io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
     
+    io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
+
     // plotting initial conditions
     if (io_cfg.write_plot && step_keeper == 0)
     {
@@ -117,7 +119,7 @@ void extendedMain()
 
         // advance time using RK for time, KEP Morinishi for space and LGF for
         // pressure poisson
-        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr());
+        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr(), time_keeper);   // time at start of step
 
         // update counters
         time_keeper += dt_master;
@@ -134,7 +136,7 @@ void extendedMain()
         // snug domain management after timestep
         auto regrid_start_time = amrex::second();
 
-        dmgr.checkAndUpdateSnugDomain(state_n);
+        dmgr.checkAndUpdateSnugDomain(state_n, time_keeper);      // time of the new state
         
         if (dmgr.did_snug_domain_change)
         {
@@ -152,7 +154,6 @@ void extendedMain()
         // refresh flag after all dependent processes are complete
         dmgr.did_snug_domain_change = false;
 
-        // writing diagnostics
         io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
 
         // solver time and output

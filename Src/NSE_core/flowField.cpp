@@ -1,4 +1,5 @@
 #include <FlowField.H>
+#include <FreestreamVelocity.H>
 
 FlowField::FlowField(const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm, const int n_comp, const int n_ghost)
 {
@@ -235,12 +236,13 @@ amrex::MultiFab computeTagVorticity(const FlowField& state)
     return vort_cc;
 }
 
-amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state, amrex::Real time)
 {
     BL_PROFILE("computeDivNonLinearTerm()");
 
     const amrex::Geometry& geom = state.getGeom();
     const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
+    const auto uinf = freestreamVelocity(time);   // N(u' + u_inf(t)), Eq. 43c
 
     const amrex::BoxArray& ba = state.getPres().boxArray();
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
@@ -257,7 +259,7 @@ amrex::MultiFab computeDivNonLinearTerm(const FlowField& state)
         
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
-            divN_arr(i,j,k) = divNonLinearTerm(i,j,k, invdx, vel);
+            divN_arr(i,j,k) = divNonLinearTerm(i,j,k, invdx, vel, uinf);
         });
     }
     

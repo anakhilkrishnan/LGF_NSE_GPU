@@ -182,13 +182,16 @@ amrex::Real discreteLaplacian(int i, int j, int k, amrex::GpuArray<amrex::Real, 
 }
 
 // convective term (vort cross vel, without 1/2|u|^2) computations for vector
-// velocity 
+// velocity. vel_arr holds u' = u - u_inf; the uniform freestream uinf is added
+// to every face velocity, so the product is omega x (u' + u_inf). omega is
+// unchanged (a uniform field has no curl).
 // returns scalar corresponding to template <dim> dimension 
 // written for in-place return
 template <int dim>
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
-                            amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr)
+                            amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr,
+                            amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf)
 {
     // extract velocities from vel_arr
     auto const& u = vel_arr[0];
@@ -201,11 +204,11 @@ amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMRE
     // above only used for variable naming; formula use u,v,w and the discreteCurl() function
     if constexpr (dim == 0)
     {
-        amrex::Real w3u2 = 0.25 * ( (discreteCurlF2E<2>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i-1, j+1, k))) 
-                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i-1, j, k))) );
+        amrex::Real w3u2 = 0.25 * ( (discreteCurlF2E<2>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i-1, j+1, k) + 2.0*uinf[1])) 
+                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i-1, j, k) + 2.0*uinf[1])) );
 #if AMREX_SPACEDIM == 3
-        amrex::Real w2u3 = 0.25 * ( (discreteCurlF2E<1>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i-1, j, k+1))) 
-                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i-1, j, k))) );
+        amrex::Real w2u3 = 0.25 * ( (discreteCurlF2E<1>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i-1, j, k+1) + 2.0*uinf[2])) 
+                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i-1, j, k) + 2.0*uinf[2])) );
         return (w2u3 - w3u2);
 #else 
         return (-w3u2);
@@ -213,11 +216,11 @@ amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMRE
     }
     else if constexpr (dim == 1)
     {
-        amrex::Real w3u1 = 0.25 * ( (discreteCurlF2E<2>(i+1, j, k, invdx, vel_arr) * (u(i+1, j, k) + u(i+1, j-1, k)))
-                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (u(i, j, k) + u(i, j-1, k))) );
+        amrex::Real w3u1 = 0.25 * ( (discreteCurlF2E<2>(i+1, j, k, invdx, vel_arr) * (u(i+1, j, k) + u(i+1, j-1, k) + 2.0*uinf[0]))
+                                    + (discreteCurlF2E<2>(i, j, k, invdx, vel_arr) * (u(i, j, k) + u(i, j-1, k) + 2.0*uinf[0])) );
 #if AMREX_SPACEDIM == 3
-        amrex::Real w1u3 = 0.25 * ( (discreteCurlF2E<0>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i, j-1, k+1)))
-                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i, j-1, k))) );
+        amrex::Real w1u3 = 0.25 * ( (discreteCurlF2E<0>(i, j, k+1, invdx, vel_arr) * (w(i, j, k+1) + w(i, j-1, k+1) + 2.0*uinf[2]))
+                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (w(i, j, k) + w(i, j-1, k) + 2.0*uinf[2])) );
 
 
         return (w3u1 - w1u3);
@@ -228,10 +231,10 @@ amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMRE
 #if AMREX_SPACEDIM == 3
     else if constexpr (dim == 2)
     {
-        amrex::Real w1u2 = 0.25 * ( (discreteCurlF2E<0>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i, j+1, k-1)))
-                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i, j, k-1))) );
-        amrex::Real w2u1 = 0.25 * ( (discreteCurlF2E<1>(i+1, j, k, invdx, vel_arr) * (u(i+1 ,j, k) + u(i+1, j, k-1)))
-                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (u(i, j,k) + u(i, j,k-1))) );
+        amrex::Real w1u2 = 0.25 * ( (discreteCurlF2E<0>(i, j+1, k, invdx, vel_arr) * (v(i, j+1, k) + v(i, j+1, k-1) + 2.0*uinf[1]))
+                                    + (discreteCurlF2E<0>(i, j, k, invdx, vel_arr) * (v(i, j, k) + v(i, j, k-1) + 2.0*uinf[1])) );
+        amrex::Real w2u1 = 0.25 * ( (discreteCurlF2E<1>(i+1, j, k, invdx, vel_arr) * (u(i+1 ,j, k) + u(i+1, j, k-1) + 2.0*uinf[0]))
+                                    + (discreteCurlF2E<1>(i, j, k, invdx, vel_arr) * (u(i, j,k) + u(i, j,k-1) + 2.0*uinf[0])) );
         return (w1u2 - w2u1);
 
     }
@@ -246,32 +249,16 @@ amrex::Real nonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMRE
 // single call function for divergence of nonLinearTerm
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 amrex::Real divNonLinearTerm(int i, int j, int k, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx,
-                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr)
+                                    amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr,
+                                    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf)
 {
-    amrex::Real div = ((nonLinearTerm<0>(i+1,j,k, invdx, vel_arr) - nonLinearTerm<0>(i,j,k, invdx, vel_arr)) * invdx[0]
-                        + (nonLinearTerm<1>(i,j+1,k, invdx, vel_arr) - nonLinearTerm<1>(i,j,k, invdx, vel_arr)) * invdx[1]);
+    amrex::Real div = ((nonLinearTerm<0>(i+1,j,k, invdx, vel_arr, uinf) - nonLinearTerm<0>(i,j,k, invdx, vel_arr, uinf)) * invdx[0]
+                        + (nonLinearTerm<1>(i,j+1,k, invdx, vel_arr, uinf) - nonLinearTerm<1>(i,j,k, invdx, vel_arr, uinf)) * invdx[1]);
 #if AMREX_SPACEDIM == 3
-    div += (nonLinearTerm<2>(i,j,k+1, invdx, vel_arr) - nonLinearTerm<2>(i,j,k, invdx, vel_arr)) * invdx[2];
+    div += (nonLinearTerm<2>(i,j,k+1, invdx, vel_arr, uinf) - nonLinearTerm<2>(i,j,k, invdx, vel_arr, uinf)) * invdx[2];
 #endif 
 
     return div;
-}
-
-// single call function for RHS of momentum update in RK-stages
-template <int dim>
-AMREX_GPU_DEVICE AMREX_FORCE_INLINE
-amrex::Real morinishiFlux(int i, int j, int k, amrex::Real invRe,
-                          amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx, 
-                          amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& invdx2,
-                          amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> vel_arr, 
-                          amrex::Array4<amrex::Real const> const& p)
-{
-    amrex::Real presterm = discreteGradientC2F<dim>(i, j, k, invdx, p);
-    amrex::Real viscterm = invRe * discreteLaplacian(i, j, k, invdx2, vel_arr[dim]);
-    // amrex::Real convterm = morinishiConvective<dim>(i, j, k, invdx, vel_arr);
-    amrex::Real convterm = nonLinearTerm<dim>(i, j, k, invdx, vel_arr);
-
-    return (viscterm - presterm - convterm); 
 }
 
 #endif

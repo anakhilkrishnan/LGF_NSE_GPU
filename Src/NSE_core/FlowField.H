@@ -57,7 +57,7 @@ class FlowField
 void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex::Geometry& geom);
 amrex::Array<amrex::MultiFab, N_VORT> computeVorticity(const FlowField& state);
 amrex::MultiFab computeTagVorticity(const FlowField& state);
-amrex::MultiFab computeDivNonLinearTerm(const FlowField& state);
+amrex::MultiFab computeDivNonLinearTerm(const FlowField& state, amrex::Real time);
 void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state);
 amrex::MultiFab computePlotDivU(const FlowField& state);
 amrex::Real computeDivUMaxNorm(const FlowField&, const amrex::BoxArray* restrict_ba = nullptr);

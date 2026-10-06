@@ -119,7 +119,7 @@ void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
     geom.define(fine_domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 }
 
-void DomainManager::initializeSnugDomain()
+void DomainManager::initializeSnugDomain(amrex::Real time)
 {
     BL_PROFILE("<Compute>initializeSnugDomain()")
     // create coarse multifab to store velocity and vorticity pass them for
@@ -147,7 +147,7 @@ void DomainManager::initializeSnugDomain()
     vor2vel(search_state.getVelArr(), search_vort, search_poisson_solver);
     // setBoundary() call not needed as vor2vel handles ghost cells as well
 
-    computeSuppBoxArr(search_state, false); // can't shed outer layer as it has never been tagged before
+    computeSuppBoxArr(search_state, time, false); // can't shed outer layer as it has never been tagged before
 
     // refine to desired resolution
     supp_ba.refine(search_to_fine_ref_ratio);
@@ -210,7 +210,7 @@ int DomainManager::computeRegridInterval(const FlowField& state) const
     return regrid_int;
 }
 
-void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLayer) 
+void DomainManager::computeSuppBoxArr(const FlowField& state, amrex::Real time, bool shedOuterLayer) 
 {
     BL_PROFILE("<Compute>computeSuppBoxArr()")
     // computes vorticity and divergence of lamb vector tags accordingly and
@@ -222,7 +222,7 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
     // this call is feasible because we ensure that at any given time, tag_vort,
     // tag_divN and state.getPres() all live on the same ba and dm
     tag_vort = computeTagVorticity(state);
-    tag_divN = computeDivNonLinearTerm(state);
+    tag_divN = computeDivNonLinearTerm(state, time);
 
     // add an if(not_initialization) branch to zero all of the outermost buffer layer's cells by a 
     // specified number of boxes
@@ -339,7 +339,7 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, bool shedOuterLaye
 #endif
 }
 
-void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
+void DomainManager::checkAndUpdateSnugDomain(const FlowField& state, amrex::Real time)
 {
     BL_PROFILE("<Compute> checkAndUpdateSnugDomain");
 
@@ -347,7 +347,7 @@ void DomainManager::checkAndUpdateSnugDomain(const FlowField& state)
     old_supp_ba = supp_ba;
 
     // tag on current flow field
-    computeSuppBoxArr(state);
+    computeSuppBoxArr(state, time);
 
     // checks if region is still same, weaker check than == because ordering and
     // indices are irrelevent to the solver; guarded against case if either is 

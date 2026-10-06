@@ -81,11 +81,11 @@ class DomainManager
         // primary functionality
         DomainManager(const SolverConfig& config);
         void defineScratch();
-        void computeSuppBoxArr(const FlowField& state, bool shedOuterLayer = true); // tagging function
-        void initializeSnugDomain();
+        void computeSuppBoxArr(const FlowField& state, amrex::Real time, bool shedOuterLayer = true); // tagging function
+        void initializeSnugDomain(amrex::Real time);
         void initializeVelField(FlowField& state, LGFOpenBC& lgf_poisson_solver);
         void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
-        void checkAndUpdateSnugDomain(const FlowField& state);
+        void checkAndUpdateSnugDomain(const FlowField& state, amrex::Real time);
         void checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_poisson_solver, int step);
         
 
