@@ -8,6 +8,10 @@
 
 #include <cmath>
 
+// uncomment below for running colliding rings test
+#define RING_DIAG_LOWER_HALF
+
+
 // ---------------------------------------------------------------------------
 // Initial vorticity omega_0(x, y, z). Every case follows the same contract:
 //   comp    : physical direction of the component (0 = x, 1 = y, 2 = z)
