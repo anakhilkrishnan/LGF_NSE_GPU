@@ -10,13 +10,13 @@ struct IOConfig
     // IO parameters
     bool write_plot = true;
     bool plot_only_support = false;
-    bool plot_post_regrid = false;
+    bool plot_pre_regrid = false;
     bool write_chk = true;
     bool write_log = true;
     bool start_from_chk = false;
 
     int plot_int = 100;
-    int plot_post_regrid_int = 10;
+    int plot_pre_regrid_int = 10;
     int chk_int = 20;
     int log_int = 1;
 
@@ -34,10 +34,10 @@ struct IOConfig
         amrex::ParmParse pp;
 
         pp.query("write_plot", write_plot);
-        pp.query("plot_post_regrid", plot_post_regrid);
+        pp.query("plot_pre_regrid", plot_pre_regrid);
         pp.query("plot_only_support", plot_only_support);
         pp.query("plot_int", plot_int);
-        pp.query("plot_post_regrid_int", plot_post_regrid_int);
+        pp.query("plot_pre_regrid_int", plot_pre_regrid_int);
         pp.query("plot_dir", plot_dir);
         pp.query("plot_prefix", plot_prefix);
 

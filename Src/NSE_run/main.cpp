@@ -20,6 +20,7 @@ void extendedMain()
 {
     BL_PROFILE("extendedMain()");
 
+    amrex::Gpu::streamSynchronize();
     auto overall_start_time = amrex::second();
     
     // creating io config object and reading inputs
@@ -97,6 +98,7 @@ void extendedMain()
     bool writeMainChk = true;
 
     // tracking solver initialization time, from the moment 
+    amrex::Gpu::streamSynchronize();
     auto init_stop_time = amrex::second();
     auto init_duration = init_stop_time - overall_start_time;
     amrex::Print() << "Step: " << step_keeper << " | Time: " << time_keeper << " | dt: " << dt_master 
@@ -115,25 +117,24 @@ void extendedMain()
     while ((!use_max_steps || step_keeper < sol_cfg.max_steps) &&
             (!use_t_stop    || time_keeper < sol_cfg.t_stop))
     {
+        amrex::Gpu::streamSynchronize();
         auto step_start_time = amrex::second();
 
-        // advance time using RK for time, KEP Morinishi for space and LGF for
-        // pressure poisson
+        // IF-HERK integrator
         workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr(), time_keeper);   // time at start of step
 
         // update counters
         time_keeper += dt_master;
         step_keeper++;
 
-        //  plot in specified intervals
-        if (step_keeper % io_cfg.plot_int == 0 && io_cfg.write_plot)
+        // plot diagnostics before domain management
+        if (io_cfg.plot_pre_regrid && step_keeper % io_cfg.plot_pre_regrid_int == 0)
         {
-            BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
+            io.writeMyPlotFile(1, false, step_keeper, time_keeper, state_n, dmgr);
         }
 
-        
         // snug domain management after timestep
+        amrex::Gpu::streamSynchronize();
         auto regrid_start_time = amrex::second();
 
         dmgr.checkAndUpdateSnugDomain(state_n, time_keeper);      // time of the new state
@@ -145,23 +146,26 @@ void extendedMain()
 
         dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step_keeper);
 
-        // plot diagnostics
-        if (io_cfg.plot_post_regrid && (dmgr.did_snug_domain_change || step_keeper % io_cfg.plot_post_regrid_int == 0))
-        {
-            io.writeMyPlotFile(1, false, step_keeper, time_keeper, state_n, dmgr);
-        }
-
-        // refresh flag after all dependent processes are complete
-        dmgr.did_snug_domain_change = false;
-
-        io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
-
         // solver time and output
+        amrex::Gpu::streamSynchronize();
         auto regrid_stop_time = amrex::second();
         auto regrid_duration = regrid_stop_time - regrid_start_time;
 
         amrex::Print() << "Snug domain management at end of step " << step_keeper
                         << " complete | WallTime: " << (regrid_duration) << "s" << "\n";
+
+        //  plot in specified intervals
+        if (io_cfg.write_plot && step_keeper % io_cfg.plot_int == 0)
+        {
+            BL_PROFILE("<IO> Interval Plot()");
+            io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
+        }
+
+        // refresh flag after all dependent processes are complete
+        dmgr.did_snug_domain_change = false;
+
+        // write out diagnostics for ring simulations
+        io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
 
         // write checkpoints in specified intervals, write fallback 'alt' checkpoints
         // 5 steps after specified interval
@@ -173,6 +177,7 @@ void extendedMain()
         }
 
         // track duration of timestep
+        amrex::Gpu::streamSynchronize();
         auto step_stop_time = amrex::second();
         auto step_duration = step_stop_time - step_start_time;
 
@@ -184,6 +189,7 @@ void extendedMain()
     }
 
     // overall code walltime tracking
+    amrex::Gpu::streamSynchronize();
     auto overall_end_time = amrex::second();
     auto elapsed_time = overall_end_time - overall_start_time;
 

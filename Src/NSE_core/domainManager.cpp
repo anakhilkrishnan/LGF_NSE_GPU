@@ -537,6 +537,7 @@ void DomainManager::checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_poi
             new_state.getVel(idim).ParallelCopy(state.getVel(idim), 0, 0, state.getVel(idim).nComp(), 0, 0);
         }
         new_state.getPres().setVal(0.0);
+        new_state.getPres().ParallelCopy(state.getPres(), 0, 0, 1, 0, 0);
         new_state.setBoundary();
 
         // move new_state back into state to continue
