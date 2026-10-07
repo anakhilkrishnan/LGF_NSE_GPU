@@ -48,6 +48,9 @@ inline ChkStatus readCheckpointStatus(const std::string& chk_dir)
     return status;
 }
 
+// which plot to write: see IOManager::writePlot
+enum class PlotKind { Lean, Dense, RegridPre, RegridPost };
+
 class IOManager
 {
     private:
@@ -66,8 +69,8 @@ class IOManager
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
         void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba);
         void initializeFlowFieldFromChk(FlowField& init_state);
-        void writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
-                                const FlowField& state, const DomainManager& dom_mgr);
+        void writePlot(PlotKind kind, int step, amrex::Real time,
+                       const FlowField& state, const DomainManager& dom_mgr);
         void writeRingDiagnostics(int step, amrex::Real time, amrex::Real dt, amrex::Real nu,
                                 const FlowField& state, const DomainManager& dom_mgr);
 };

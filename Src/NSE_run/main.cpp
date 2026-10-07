@@ -87,11 +87,11 @@ void extendedMain()
     io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
 
     // plotting initial conditions
-    if (io_cfg.write_plot && step_keeper == 0)
+    if (step_keeper == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
-
+        if (io_cfg.write_plot) { io.writePlot(PlotKind::Lean,  step_keeper, time_keeper, state_n, dmgr); }
+        if (io_cfg.plot_dense) { io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr); }
     }
 
     // switch for main and alt chk files
@@ -127,24 +127,24 @@ void extendedMain()
         time_keeper += dt_master;
         step_keeper++;
 
-        // plot diagnostics before domain management
-        if (io_cfg.plot_pre_regrid && step_keeper % io_cfg.plot_pre_regrid_int == 0)
-        {
-            io.writeMyPlotFile(1, false, step_keeper, time_keeper, state_n, dmgr);
-        }
-
         // snug domain management after timestep
         amrex::Gpu::streamSynchronize();
         auto regrid_start_time = amrex::second();
 
         dmgr.checkAndUpdateSnugDomain(state_n, time_keeper);      // time of the new state
-        
+
+        // regrid pair: only on steps where the grid changes (the flag is known only from here on)
+        const bool regrid_plots = io_cfg.plot_regrid && dmgr.did_snug_domain_change;
+        if (regrid_plots) { io.writePlot(PlotKind::RegridPre, step_keeper, time_keeper, state_n, dmgr); }
+
         if (dmgr.did_snug_domain_change)
         {
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
         }
 
         dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step_keeper);
+
+        if (regrid_plots) { io.writePlot(PlotKind::RegridPost, step_keeper, time_keeper, state_n, dmgr); }
 
         // solver time and output
         amrex::Gpu::streamSynchronize();
@@ -157,8 +157,11 @@ void extendedMain()
         //  plot in specified intervals
         if (io_cfg.write_plot && step_keeper % io_cfg.plot_int == 0)
         {
-            BL_PROFILE("<IO> Interval Plot()");
-            io.writeMyPlotFile(0, io_cfg.plot_only_support, step_keeper, time_keeper, state_n, dmgr);
+            io.writePlot(PlotKind::Lean, step_keeper, time_keeper, state_n, dmgr);
+        }
+        if (io_cfg.plot_dense && step_keeper % io_cfg.plot_dense_int == 0)
+        {
+            io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr);
         }
 
         // refresh flag after all dependent processes are complete
@@ -206,5 +209,4 @@ void extendedMain()
     amrex::Print() << "Max compute time (Slowest Rank): " << max_time << " s\n"
                    << "Min compute time (Fastest Rank): " << min_time << " s\n"
                    << "Time spread (Load Imbalance)   : " << (max_time - min_time) << " s\n";
-}   
-
+}
