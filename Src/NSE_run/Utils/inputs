@@ -1,6 +1,6 @@
 amrex.max_gpu_streams = 128
 
-n_cell = 640
+n_cell = 320
 max_grid_size = 16
 
 search_to_fine_ref_ratio = 4
@@ -14,29 +14,31 @@ n_shed_box = 1
 domain_lo = -3.2 -3.2 -3.2
 domain_hi = 3.2 3.2 3.2
 
-max_steps = 7000
+max_steps = -1
 t_start = 0.0
-t_stop = 40.0
-set_dt = 5.733945e-3
-cfl = 0.5
+t_stop = 300.0
+set_dt = 0.01721
+cfl = 0.5 # not used
 
-invRe = 1.333333333333e-4
-support_threshold = 1e-7
-int_fact_threshold = 1e-9
+invRe = 1.3333333333333333e-4
+support_threshold = 1.0e-7
+int_fact_threshold = 1.0e-10
 
 n_lookup = 16
 
 write_plot = true
-plot_int = 500
-plot_pre_regrid = false
-plot_pre_regrid_int = 100
-plot_only_support = false
+plot_int = 800
+plot_presssure = true
+plot_only_support = true
+plot_dense = false
+plot_dense_int = 100
+plot_regrid = false
 plot_dir = "./Results"
 plot_prefix = "/plt"
 
 write_chk = true
 start_from_chk = false
-chk_int = 100
+chk_int = 200
 chk_dir = "./Checkpoints/main"
 altchk_dir = "./Checkpoints/alt"
 chk_prefix = "/chk"
