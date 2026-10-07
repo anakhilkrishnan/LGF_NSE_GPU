@@ -170,6 +170,14 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }
 
+// switches AMReX's FAB output format for the lifetime of this object, then restores it
+struct FabFormatGuard
+{
+    amrex::FABio::Format saved = amrex::FArrayBox::getFormat();
+    explicit FabFormatGuard (amrex::FABio::Format fmt) { amrex::FArrayBox::setFormat(fmt); }
+    ~FabFormatGuard () { amrex::FArrayBox::setFormat(saved); }
+};
+
 void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, amrex::Real time,
                                 const FlowField& state, const DomainManager& dom_mgr)
 {
@@ -184,6 +192,9 @@ void IOManager::writeMyPlotFile(int diag_num, bool restrictToSupport, int step, 
     // All grid and field data is pulled from dom_mgr, so the plotted quantities
     // are whatever the domain manager currently holds (freshly valid after the
     // last computeSuppBoxArr / vor2vel).
+
+    // comment below for double precision plots
+    FabFormatGuard single_precision(amrex::FABio::FAB_NATIVE_32);   // plots only
 
     // filename: diag_num == 0 is the mainstream plot (no suffix); diag_num >= 1
     // appends an xdiagNN suffix so the same step can be replotted without clash.
