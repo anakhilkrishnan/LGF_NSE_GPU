@@ -12,10 +12,10 @@
 namespace freestream_params
 {
     // general case, no freestream velocity
-    constexpr amrex::Real U[3] = {0.0, 0.0, 0.0};
+    // constexpr amrex::Real U[3] = {0.0, 0.0, 0.0};
 
     // Liska & Colonius (2016), Sec. 6.4: constant u_inf = (0, 0, -0.18686) Gamma0/R0
-    // constexpr amrex::Real U[3] = {0.0, 0.0, -0.18686};
+    constexpr amrex::Real Ux = 0.0, Uy = 0.0, Uz = -0.18686;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -24,14 +24,16 @@ amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> freestreamVelocity (amrex::Real t) 
     amrex::ignore_unused(t);
 
     using namespace freestream_params;
-    return {AMREX_D_DECL(U[0], U[1], U[2])};
+    return {AMREX_D_DECL(Ux, Uy, Uz)};
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> freestreamDisplacement (amrex::Real t) noexcept
 {
     using namespace freestream_params;
-    return {AMREX_D_DECL(U[0] * t, U[1] * t, U[2] * t)};
+    
+    // correct for constant freestream
+    return {AMREX_D_DECL(Ux * t, Uy * t, Uz * t)};
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -39,6 +41,7 @@ amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> freestreamAcceleration (amrex::Real
 {
     amrex::ignore_unused(t);
 
+    // correct for constant freestream
     return {AMREX_D_DECL(0.0, 0.0, 0.0)};
 }
 
