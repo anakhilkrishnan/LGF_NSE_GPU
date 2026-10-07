@@ -28,8 +28,8 @@ n_lookup = 16
 
 write_plot = true
 plot_int = 500
-plot_post_regrid = false
-plot_post_regrid_int = 100
+plot_pre_regrid = false
+plot_pre_regrid_int = 100
 plot_only_support = false
 plot_dir = "./Results"
 plot_prefix = "/plt"
