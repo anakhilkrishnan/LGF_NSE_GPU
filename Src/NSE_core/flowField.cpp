@@ -59,7 +59,8 @@ void FlowField::setBoundary()
     // update velocity fields
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        // update ghost cells
+        // update interior ghost cells; set outer ghost cells 0.0
+        vel[idim].setBndry(0.0);
         vel[idim].FillBoundary(globalgeom.periodicity());
     }
 

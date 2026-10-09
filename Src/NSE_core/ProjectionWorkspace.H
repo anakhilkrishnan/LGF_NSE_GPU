@@ -87,7 +87,7 @@ class ProjectionWorkspace
 
         void applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, int if_idx);
         void computeGStage(const FlowField& st, int i, amrex::Real t_stage);  // N(u^{i-1} + u_inf(t_stage))   // g^i -> w[i]
-        
+        void maskToSupport(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, const amrex::BoxArray& supp);
         void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba, amrex::Real time_n);
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };

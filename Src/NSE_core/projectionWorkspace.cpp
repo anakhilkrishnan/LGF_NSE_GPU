@@ -292,7 +292,11 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
     const auto&        per = stage.getGeom().periodicity();
     if (if_idx < 0) 
     {                                  // H = I
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) { fld[d].FillBoundary(per); }
+        for (int d = 0; d < AMREX_SPACEDIM; ++d)
+        {
+            fld[d].setBndry(0.0);
+            fld[d].FillBoundary(per);
+        }
         return;
     }
 
@@ -303,6 +307,7 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
     {
         for (int sd = 0; sd < AMREX_SPACEDIM; ++sd)
         {
+            fld[idim].setBndry(0.0);
             fld[idim].FillBoundary(per);
 
             const int di = (sd == 0), dj = (sd == 1), dk = (sd == 2);
@@ -326,6 +331,7 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
             }
             std::swap(fld[idim], IF_buff[idim]);      // result back in fld
         }
+        fld[idim].setBndry(0.0);
         fld[idim].FillBoundary(per);
     }
 }
@@ -369,6 +375,24 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i, amrex::Real 
                 { g_arr(i2,j2,k2) = coef * nonLinearTerm<2>(i2,j2,k2, invdx, vel, uinf); });
             }
 #endif
+        }
+    }
+}
+
+void ProjectionWorkspace::maskToSupport(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld,
+                                        const amrex::BoxArray& supp)
+{
+    BL_PROFILE("<Compute> maskToSupport()");
+    for (int d = 0; d < AMREX_SPACEDIM; ++d)
+    {
+        const amrex::BoxArray keep = amrex::convert(supp, fld[d].ixType());
+        for (amrex::MFIter mfi(fld[d]); mfi.isValid(); ++mfi)
+        {
+            const amrex::BoxList outside = keep.complementIn(mfi.validbox());
+            for (const amrex::Box& b : outside)
+            {
+                fld[d][mfi].setVal<amrex::RunOn::Device>(0.0, b);
+            }
         }
     }
 }
@@ -437,6 +461,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         const amrex::Real t_stage = time_n + ((i == 1) ? 0.0 : cT(i-1)) * dt;
         stage.setBoundary();
         computeGStage(stage, i, t_stage);
+        maskToSupport(w[i], tag_ba);     
 
         // --- age q and w[1..i-1] by H^{i-1}.  Eqs. (29), (30) --------------
         if (i > 1)

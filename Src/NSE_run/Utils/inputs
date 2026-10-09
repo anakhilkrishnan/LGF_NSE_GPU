@@ -28,7 +28,7 @@ n_lookup = 16
 
 write_plot = true
 plot_int = 800
-plot_presssure = true
+plot_pressure = true
 plot_only_support = true
 plot_dense = false
 plot_dense_int = 100

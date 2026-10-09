@@ -40,6 +40,6 @@ if ldd $EXEC | grep -q "not found"; then
     echo "UNRESOLVED:"; ldd $EXEC | grep "not found"; exit 1
 fi
 
-mpiexec -n $SLURM_NTASKS --map-by socket --bind-to socket --report-bindings $EXEC $INPUTS_FILE $AMREX_ARGS
+mpiexec -n $SLURM_NTASKS --map-by socket --bind-to socket --report-bindings $EXEC $INPUTS_FILE $AMREX_ARGS | tee ./Logs/log_run.txt
 
 
