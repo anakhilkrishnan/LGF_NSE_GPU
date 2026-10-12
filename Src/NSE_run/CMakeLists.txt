@@ -70,6 +70,14 @@ add_custom_command(TARGET nserun POST_BUILD
     COMMENT "Syncing GPU jobscripts to Exec/NSE_test..."
 )
 
+# Update the jobscript file
+add_custom_command(TARGET nserun POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/Utils/cpu_multi.sh"
+    "${BUILD_PARENT_DIR}/NSE_test/cpu_multi.sh"
+    COMMENT "Syncing GPU jobscripts to Exec/NSE_test..."
+)
+
 # Update the KE postprocessing file
 add_custom_command(TARGET nserun POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

@@ -10,18 +10,11 @@
 #SBATCH --error=job.%J.err
 #SBATCH --output=job.%J.out
 
+source ~/.bashrc
 set -o pipefail
 
-# Environment
-module purge
-module load spack
-. /home/apps/spack/share/spack/setup-env.sh
-module load nvhpc-hpcx-cuda13/25.11
-spack load gcc@13.4.0/azyvhui
-spack load cmake@3.31.12/q57c2r6
-export CC=gcc CXX=g++ OMPI_CC=gcc OMPI_CXX=g++
-
-which cmake nvcc mpicxx g++
+# Source environment
+source "$HOME/env-rudra.sh" || exit 1
 
 # MPI / UCX
 export OMP_NUM_THREADS=1

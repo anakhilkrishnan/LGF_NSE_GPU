@@ -16,8 +16,6 @@ Development of the code began in March 2026, as a CFD course project. The progre
 
 > You'd truly be surprised to see how far the code's performance has come since day 1. And with the code, you've grown too!
 
-## Current capabilites
-
 ## Yet to implement
 
 ## Yet to decide
