@@ -13,10 +13,10 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 
 ## Yet to implement
 
-1. `n_cell` and `max_grid_size` need to take `IntVect()` input.
+1. ~~`n_cell` and `max_grid_size` need to take `amrex::IntVect` input, and `dom_lo` and `dom_hi` take `amrex::RealVect` input~~.
 2. `n_comp` and `n_ghost` need to be removed from inputs, must be deliberately set in each required location (`n_ghost` needs to be set based on `n_IF`).
 3. CFL must be checked in each step.
-4. `rk_stages` in inputs is not needed.
+4. ~~`rk_stages` in inputs is not needed~~.
 5. Validate the `precomputeIFs()` function.
 6. Set all diagnostic norms correctly `divU_max_end`, `vel_refresh_err_max_norm` and so on.
 7. Compute `q_max` correctly, no longer in inputs.

@@ -9,13 +9,13 @@ struct SolverConfig
 {
     // grid parameters
     // initial coarse search grid parameters
-    int n_cell;
-    int max_grid_size;
+    amrex::IntVect n_cell;
+    amrex::IntVect max_grid_size;
 
     // fine grid parameters
     int search_to_fine_ref_ratio;
-    int n_cell_search;
-    int max_grid_size_search;
+    amrex::IntVect n_cell_search;
+    amrex::IntVect max_grid_size_search;
     int n_ghost;
     int n_ghost_max;
     int n_IF = 4;
@@ -23,7 +23,7 @@ struct SolverConfig
     int regrid_int = 5;
     int n_buffer_box = 2;
     int n_shed_box = 1;
-    amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
+    amrex::RealVect dom_lo, dom_hi;
 
     // time stepping parameters
     int max_steps;
@@ -42,8 +42,8 @@ struct SolverConfig
     {
         amrex::ParmParse pp;
 
-        pp.get("n_cell", n_cell);
-        pp.get("max_grid_size", max_grid_size);
+        pp.getarr("n_cell", n_cell);
+        pp.getarr("max_grid_size", max_grid_size);
 
         pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
         pp.get("n_ghost", n_ghost);
@@ -53,8 +53,8 @@ struct SolverConfig
         pp.query("regrid_int", regrid_int);
         pp.query("n_buffer_box", n_buffer_box);
         pp.query("n_shed_box", n_shed_box);
-        pp.get("domain_lo", dom_lo);
-        pp.get("domain_hi", dom_hi);
+        pp.getarr("domain_lo", dom_lo);
+        pp.getarr("domain_hi", dom_hi);
 
         pp.get("max_steps", max_steps);
         pp.get("t_start", t_start);
@@ -70,6 +70,9 @@ struct SolverConfig
 
         n_cell_search = n_cell / search_to_fine_ref_ratio;
         max_grid_size_search = max_grid_size / search_to_fine_ref_ratio;
+
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_fine_ref_ratio == n_cell, "Search space refinement doesn't divide nicely!");
+        
     }
 };
 

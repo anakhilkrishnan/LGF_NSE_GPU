@@ -49,12 +49,13 @@ class DomainManager
         // inputs needed from Solver config
         int regrid_int;
 
-        int n_cell, max_grid_size, n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
-        amrex::Array<amrex::Real, AMREX_SPACEDIM> dom_lo, dom_hi;
+        amrex::IntVect n_cell, max_grid_size;
+        int n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
+        amrex::RealVect dom_lo, dom_hi;
         amrex::Real supp_tag_eps;
 
         // supporting functions
-        void growBoxArr(amrex::BoxArray& tag_ba, int nBuff, int max_grid_size);
+        void growBoxArr(amrex::BoxArray& tag_ba, amrex::IntVect nBuff, amrex::IntVect max_grid_size_req);
         void updateGeomBaDm(const amrex::BoxArray& new_ba);
         int computeRegridInterval(const FlowField& state) const;
 

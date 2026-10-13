@@ -30,16 +30,14 @@ DomainManager::DomainManager(const SolverConfig& config)
     AMREX_ALWAYS_ASSERT(n_shed_box >= 1 && n_shed_box < n_buffer_box);
         
     // creating domain data objects
-    amrex::IntVect dom_lo_iv(AMREX_D_DECL(0, 0, 0));
-    amrex::IntVect dom_hi_iv(AMREX_D_DECL(config.n_cell_search-1, config.n_cell_search-1, config.n_cell_search-1));
-    amrex::Box domain(dom_lo_iv, dom_hi_iv);
+    amrex::Box domain(amrex::IntVect(0), (config.n_cell_search - 1));
 
     ba.define(domain);
     ba.maxSize(config.max_grid_size_search);
     
     dm = amrex::DistributionMapping(ba);
 
-    amrex::RealBox real_box(dom_lo, dom_hi);
+    amrex::RealBox real_box(dom_lo.dataPtr(), dom_hi.dataPtr());
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0); // infinite domain using zero-grad BC
     geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
 
@@ -80,7 +78,7 @@ void DomainManager::defineScratch()
     }
 }
 
-void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, int nBuff, int max_grid_size_req)
+void DomainManager::growBoxArr(amrex::BoxArray& xsoln_ba, amrex::IntVect nBuff, amrex::IntVect max_grid_size_req)
 {
     xsoln_ba.grow(nBuff);          // grow each box (now overlapping)
     xsoln_ba.removeOverlap(true);     // BoxArray method: removes overlap AND simplifies
@@ -112,8 +110,8 @@ void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
     dm = amrex::DistributionMapping(ba);
 
     // geom: same physical RealBox, but FINE resolution domain box
-    amrex::Box fine_domain(amrex::IntVect(0), amrex::IntVect(AMREX_D_DECL(n_cell-1, n_cell-1, n_cell-1)));
-    amrex::RealBox real_box({AMREX_D_DECL(dom_lo[0], dom_lo[1], dom_lo[2])}, {AMREX_D_DECL(dom_hi[0], dom_hi[1], dom_hi[2])});
+    amrex::Box fine_domain(amrex::IntVect(0), (n_cell - 1));
+    amrex::RealBox real_box(dom_lo.dataPtr(), dom_hi.dataPtr());
 
     amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0);
     geom.define(fine_domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
