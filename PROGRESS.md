@@ -14,7 +14,7 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 ## Yet to implement
 
 1. `n_cell` and `max_grid_size` need to take `IntVect()` input.
-2. `n_comp` and `n_host` need to be removed from inputs, must be deliberately set in each required location (`n_ghost` needs to be set based on `n_IF`).
+2. `n_comp` and `n_ghost` need to be removed from inputs, must be deliberately set in each required location (`n_ghost` needs to be set based on `n_IF`).
 3. CFL must be checked in each step.
 4. `rk_stages` in inputs is not needed.
 5. Validate the `precomputeIFs()` function.
@@ -26,6 +26,9 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 11. Plots represent perturbation velocity and total pressure. Switch to full velocity and static pressure plots.
 12. Report `divInitVort` to ensure that flux-averaged initialization works.
 13. Scheme C from Liska and Colonius' paper doesn't work. Check why and remove conflicting assert that is unused.
+14. Input parameters need to be split into different ParamParse streams (for ease of reading the inputs file).
+15. Fused kernel launches and reduced memory traffic optimizations pending (see Claude thread on optimization).
+
 
 ## Yet to decide
 

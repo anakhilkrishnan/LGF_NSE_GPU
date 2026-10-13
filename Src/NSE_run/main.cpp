@@ -27,6 +27,9 @@ void extendedMain()
     IOConfig io_cfg;
     io_cfg.readInputs(); 
 
+    // force VisMF to use only n_files_per_MF number of files for each plotdir
+    amrex::VisMF::SetNOutFiles(io_cfg.n_files_per_MF);
+
     // initializing io manager object
     IOManager io(io_cfg);
 

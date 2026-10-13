@@ -18,6 +18,7 @@ struct IOConfig
     bool start_from_chk = false;
 
     int plot_int = 100;
+    int n_files_per_MF = 32;
     int plot_dense_int = 1000;
     int chk_int = 20;
     int log_int = 1;
@@ -42,6 +43,7 @@ struct IOConfig
         pp.query("plot_only_support", plot_only_support);
         pp.query("plot_int", plot_int);
         pp.query("plot_dense_int", plot_dense_int);
+        pp.query("n_files_per_MF", n_files_per_MF);
         pp.query("plot_dir", plot_dir);
         pp.query("plot_prefix", plot_prefix);
 

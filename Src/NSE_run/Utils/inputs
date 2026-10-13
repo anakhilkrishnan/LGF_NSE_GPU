@@ -33,6 +33,7 @@ plot_only_support = true
 plot_dense = false
 plot_dense_int = 100
 plot_regrid = false
+n_files_per_MF = 32
 plot_dir = "./Results"
 plot_prefix = "/plt"
 
