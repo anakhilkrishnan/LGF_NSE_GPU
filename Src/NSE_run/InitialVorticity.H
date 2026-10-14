@@ -11,7 +11,6 @@
 // uncomment below for running colliding rings test
 #define RING_DIAG_LOWER_HALF
 
-
 // ---------------------------------------------------------------------------
 // Initial vorticity omega_0(x, y, z). Every case follows the same contract:
 //   comp    : physical direction of the component (0 = x, 1 = y, 2 = z)
@@ -66,9 +65,9 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real collidingRingsVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
     constexpr amrex::Real R     = 1.0;                      // ring radius
-    constexpr amrex::Real delta = 0.2;                      // core radius
+    constexpr amrex::Real delta = 0.14142135623730950;      // core radius
     constexpr amrex::Real Gamma = 1.0;                      // circulation magnitude
-    constexpr amrex::Real z0    = 1.5;                      // half the initial centre separation
+    constexpr amrex::Real z0    = 1.25;                      // half the initial centre separation
     constexpr amrex::Real xc = 0.0, yc = 0.0;               // common axis
 
     return gaussianRingVorticity(comp, x, y, z, R, delta,  Gamma, xc, yc, -z0)
@@ -92,13 +91,33 @@ amrex::Real decayingVortexVorticity (int comp, amrex::Real x, amrex::Real y, amr
     return omega_0 * (1.0 - s) * std::exp(-s);
 }
 
+// below for collision simulation with shear-free wall behavior using image rings
+namespace collision_params
+{
+    constexpr amrex::Real R = 1.0, delta = 0.1, Gamma = 1.0;
+    constexpr amrex::Real z0 = 1.25;                     // rings at +-z0
+    constexpr amrex::Real zw = z0 + 1.0;                 // stress-free walls R0 behind each ring
+    constexpr amrex::Real zi = 2.0*zw - z0;              // image rings
+}
+#define RING_DIAG_ZLO (-collision_params::zw)  
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+{
+    using namespace collision_params;
+    return gaussianRingVorticity(comp, x, y, z, R, delta,  Gamma, 0.0, 0.0, -z0)
+         + gaussianRingVorticity(comp, x, y, z, R, delta, -Gamma, 0.0, 0.0,  z0)
+         + gaussianRingVorticity(comp, x, y, z, R, delta, -Gamma, 0.0, 0.0, -zi)
+         + gaussianRingVorticity(comp, x, y, z, R, delta,  Gamma, 0.0, 0.0,  zi);
+}
+
 // The active case. The pipeline only ever calls this function.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real initialVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
     // return vortexRingVorticity(comp, x, y, z);
     // return decayingVortexVorticity(comp, x, y, z);
-    return collidingRingsVorticity(comp, x, y, z);
+    // return collidingRingsVorticity(comp, x, y, z);
+    return collidingRingsWithWallImageVorticity(comp, x, y, z);
 }
 
 #endif
