@@ -3,8 +3,8 @@ amrex.max_gpu_streams = 128
 # provide as many values as dimensions
 n_cell = 320 320 320
 max_grid_size = 16 16 16
-domain_lo = -3.2 -3.2 -3.2
-domain_hi = 3.2 3.2 3.2
+search_domain_lo = -3.2 -3.2 -3.2
+search_domain_hi = 3.2 3.2 3.2
 
 search_to_fine_ref_ratio = 4
 n_ghost = 3 # must be >= 2

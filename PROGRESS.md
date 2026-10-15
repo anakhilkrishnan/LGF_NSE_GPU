@@ -28,6 +28,8 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 13. Scheme C from Liska and Colonius' paper doesn't work. Check why and remove conflicting assert that is unused.
 14. Input parameters need to be split into different ParamParse streams (for ease of reading the inputs file).
 15. Fused kernel launches and reduced memory traffic optimizations pending (see Claude thread on optimization).
+16. Allow for refinement at each restart (current idea: refine vorticity, perform vor2vel).
+17. ~~During search tagging, check if any tagged boxes are on the edge of the search domain. If so, abort~~. 
 
 
 ## Yet to decide

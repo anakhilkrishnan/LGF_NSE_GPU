@@ -147,6 +147,27 @@ void DomainManager::initializeSnugDomain(amrex::Real time)
 
     computeSuppBoxArr(search_state, time, false); // can't shed outer layer as it has never been tagged before
 
+    // supp_ba can never be empty
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!supp_ba.empty(), "initializeSnugDomain: no vorticity tagged in the search domain");
+    
+    // check if search domain was large enough to capture the support region,
+    // abort if not checking using bounding box of supp_ba grown by 1; if grown
+    // bounding box isn't contained within domain, then it is too small
+    const amrex::Box supp_bbox = supp_ba.minimalBox();
+    const amrex::RealBox supp_rbox(supp_bbox, geom.CellSize(), geom.ProbLo());
+    if (!geom.Domain().contains(amrex::grow(supp_bbox, 1)))
+    {
+        amrex::Print(amrex::ErrorStream())
+                << "initializeSnugDomain: the tagged support reaches the search-domain boundary\n"
+                << "  support bounding box " << supp_bbox << " = " << supp_rbox << "\n"
+                << "  search domain        " << geom.Domain() << " = " << geom.ProbDomain() << "\n";
+        amrex::Abort("initializeSnugDomain: support clipped by domain_lo/domain_hi instead of chosen by the flow;"
+                    " enlarge the domain, or check the initial condition for vorticity (or a projection tail)"
+                    " reaching that far");
+    }
+    amrex::Print() << "Initial support: " << supp_ba.size() << " search boxes spanning " << supp_rbox
+                    << " inside the search domain " << geom.ProbDomain() << "\n";
+
     // refine to desired resolution
     supp_ba.refine(search_to_fine_ref_ratio);
     old_supp_ba = supp_ba;

@@ -121,31 +121,39 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real archerRingVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
     constexpr amrex::Real R0 = 1.0, delta = 0.2, Gamma = 1.0;
-    constexpr amrex::Real varsigma = 2.0e-4;                   // centreline-radius perturbation amplitude
+    // Archer et al. use varsigma = 2e-4 in their (non-solenoidal, then projected) form. The solenoidal form also
+    // carries the full tilt of the displaced vorticity, which puts 3.4-4.2x more velocity amplitude into the
+    // unstable band n = 9-11 for the same displacement; 5.3e-5 = 2e-4 / 3.8 matches their amplitude at n = 10
+    // (within 12% for n = 9-11), so their timeline (still linear at t = 47.5) carries over.
+    constexpr amrex::Real varsigma = 5.3e-5;
     constexpr int nmodes = 32;                                  // modes n = 1..32 (thin core)
     constexpr unsigned int seed = 2008u;                        // realisation of the random phases
     constexpr amrex::Real twopi = 6.283185307179586;
-
-    if (comp == 2) { return 0.0; }                              // purely azimuthal: omega_z = 0
+ 
+    if (comp == 2) { return 0.0; }                              // omega_z = 0 (both parts lie in z = const planes)
     const amrex::Real r = std::sqrt(x*x + y*y);
     if (r == 0.0) { return 0.0; }
-    // beyond 6 delta from the unperturbed centreline the Gaussian is < 1e-15 of its peak, and the
-    // perturbation (|varsigma f| R0 <= 32 varsigma R0 << delta) cannot change that: skip the mode sum
-    if ((r - R0)*(r - R0) + z*z > 36.0 * delta * delta) { return 0.0; }
+    const amrex::Real s2 = (r - R0)*(r - R0) + z*z;
+    if (s2 > 36.0 * delta * delta) { return 0.0; }              // beyond 6 delta: < 1e-15 of the peak
+    const amrex::Real W = Gamma / (amrex::Math::pi<amrex::Real>() * delta * delta) * std::exp(-s2 / (delta * delta));
+    const amrex::Real g = -2.0 * (r - R0) / (delta * delta);    // (dW/dr) / W
+ 
     const amrex::Real c1 = x / r, s1 = y / r;                   // cos(theta), sin(theta)
-    amrex::Real cn = 1.0, sn = 0.0, f = 0.0;
+    amrex::Real cn = 1.0, sn = 0.0, f = 0.0, fp = 0.0;
     for (int n = 1; n <= nmodes; ++n)
     {
         const amrex::Real cnew = cn*c1 - sn*s1;                 // cos(n theta), sin(n theta) by recurrence
         sn = sn*c1 + cn*s1;
         cn = cnew;
         const amrex::Real phi = twopi * archerHashUniform(seed * 2654435761u + static_cast<unsigned int>(n));
-        f += std::cos(phi) * sn + std::sin(phi) * cn;           // A_n sin(n theta) + B_n cos(n theta)
+        const amrex::Real An = std::cos(phi), Bn = std::sin(phi);
+        f  += An * sn + Bn * cn;                                // A_n sin(n theta) + B_n cos(n theta)
+        fp += n * (An * cn - Bn * sn);                          // d f / d theta
     }
-    const amrex::Real Rp = R0 * (1.0 + varsigma * f);
-    const amrex::Real wt = Gamma / (amrex::Math::pi<amrex::Real>() * delta * delta)
-                         * std::exp(-((r - Rp)*(r - Rp) + z*z) / (delta * delta));
-    return (comp == 0) ? -wt * y / r : (comp == 1) ? wt * x / r : 0.0;
+    const amrex::Real a = varsigma * R0;
+    // omega = W e_theta + curl(a f W z_hat):  curl(psi z_hat) = (d psi/dy, -d psi/dx, 0)
+    if (comp == 0) { return -W * s1 + a * W * (fp * x / (r*r) + f * g * s1); }
+    else           { return  W * c1 + a * W * (fp * y / (r*r) - f * g * c1); }
 }
 
 // The active case. The pipeline only ever calls this function.

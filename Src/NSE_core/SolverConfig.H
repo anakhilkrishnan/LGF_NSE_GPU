@@ -53,8 +53,8 @@ struct SolverConfig
         pp.query("regrid_int", regrid_int);
         pp.query("n_buffer_box", n_buffer_box);
         pp.query("n_shed_box", n_shed_box);
-        pp.getarr("domain_lo", dom_lo);
-        pp.getarr("domain_hi", dom_hi);
+        pp.getarr("search_domain_lo", dom_lo);
+        pp.getarr("search_domain_hi", dom_hi);
 
         pp.get("max_steps", max_steps);
         pp.get("t_start", t_start);
