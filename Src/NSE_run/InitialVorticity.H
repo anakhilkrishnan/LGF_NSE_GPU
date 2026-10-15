@@ -9,7 +9,7 @@
 #include <cmath>
 
 // uncomment below for running colliding rings test
-#define RING_DIAG_LOWER_HALF
+// #define RING_DIAG_LOWER_HALF
 
 // ---------------------------------------------------------------------------
 // Initial vorticity omega_0(x, y, z). Every case follows the same contract:
@@ -99,7 +99,7 @@ namespace collision_params
     constexpr amrex::Real zw = z0 + 1.0;                 // stress-free walls R0 behind each ring
     constexpr amrex::Real zi = 2.0*zw - z0;              // image rings
 }
-#define RING_DIAG_ZLO (-collision_params::zw)  
+// #define RING_DIAG_ZLO (-collision_params::zw)  
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
@@ -110,6 +110,44 @@ amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex
          + gaussianRingVorticity(comp, x, y, z, R, delta,  Gamma, 0.0, 0.0,  zi);
 }
 
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real archerHashUniform (unsigned int x) noexcept          // lowbias32 integer hash -> [0, 1)
+{
+    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
+    return static_cast<amrex::Real>(x) * amrex::Real(2.3283064365386963e-10);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real archerRingVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+{
+    constexpr amrex::Real R0 = 1.0, delta = 0.2, Gamma = 1.0;
+    constexpr amrex::Real varsigma = 2.0e-4;                   // centreline-radius perturbation amplitude
+    constexpr int nmodes = 32;                                  // modes n = 1..32 (thin core)
+    constexpr unsigned int seed = 2008u;                        // realisation of the random phases
+    constexpr amrex::Real twopi = 6.283185307179586;
+
+    if (comp == 2) { return 0.0; }                              // purely azimuthal: omega_z = 0
+    const amrex::Real r = std::sqrt(x*x + y*y);
+    if (r == 0.0) { return 0.0; }
+    // beyond 6 delta from the unperturbed centreline the Gaussian is < 1e-15 of its peak, and the
+    // perturbation (|varsigma f| R0 <= 32 varsigma R0 << delta) cannot change that: skip the mode sum
+    if ((r - R0)*(r - R0) + z*z > 36.0 * delta * delta) { return 0.0; }
+    const amrex::Real c1 = x / r, s1 = y / r;                   // cos(theta), sin(theta)
+    amrex::Real cn = 1.0, sn = 0.0, f = 0.0;
+    for (int n = 1; n <= nmodes; ++n)
+    {
+        const amrex::Real cnew = cn*c1 - sn*s1;                 // cos(n theta), sin(n theta) by recurrence
+        sn = sn*c1 + cn*s1;
+        cn = cnew;
+        const amrex::Real phi = twopi * archerHashUniform(seed * 2654435761u + static_cast<unsigned int>(n));
+        f += std::cos(phi) * sn + std::sin(phi) * cn;           // A_n sin(n theta) + B_n cos(n theta)
+    }
+    const amrex::Real Rp = R0 * (1.0 + varsigma * f);
+    const amrex::Real wt = Gamma / (amrex::Math::pi<amrex::Real>() * delta * delta)
+                         * std::exp(-((r - Rp)*(r - Rp) + z*z) / (delta * delta));
+    return (comp == 0) ? -wt * y / r : (comp == 1) ? wt * x / r : 0.0;
+}
+
 // The active case. The pipeline only ever calls this function.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real initialVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
@@ -117,7 +155,8 @@ amrex::Real initialVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Rea
     // return vortexRingVorticity(comp, x, y, z);
     // return decayingVortexVorticity(comp, x, y, z);
     // return collidingRingsVorticity(comp, x, y, z);
-    return collidingRingsWithWallImageVorticity(comp, x, y, z);
+    // return collidingRingsWithWallImageVorticity(comp, x, y, z);
+    return archerRingVorticity(comp, x, y, z);
 }
 
 #endif
