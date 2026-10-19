@@ -12,4 +12,4 @@ The methods implemented in the solver are directly taken/adapted from Liska and 
 
 The solver is part of a larger developmental process of applying LGF-based methods to simulate multiphase flows, flows past solid objects, bubbles and bubble clusters, and so on,  in an incompressible framework. 
 
-Development of the code began in March 2026, as a CFD course project. The progress thus far is the culmination of countless inputs from my PhD advisor, lab mates, friends, and popular LLM's, paired with long hours of writing, debugging, rewriting, and refining code (all while having 5 different code explanation websites open), and having a supercomputer to test and run those codes on.
+Development of the code began in March 2026, as a CFD course project. The progress thus far is the culmination of countless inputs from my PhD advisor, lab mates, friends, and popular LLM's, paired with long hours of writing, debugging, rewriting, and refining code (all while having 5 different code explanation websites open), and having a supercomputer to test and run those codes on. Ofcourse, none of this would be possible without the support of my loved ones, and my sister.

@@ -9,7 +9,7 @@ Indian Institute of Science
 A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 
 1. A scalar field like a *signed distance function* (SDF) which is advected with the flow.
-2. A high-order discretization of the convection of the scalar field, such as WENO 5 or HOUC (*High-Order Upstream Convective*) schemes.
+2. A high-order discretization of the convection of the scalar field, such as WENO 5 or HOUC (*High-Order Upstream Central*) schemes.
 
 ## Yet to implement
 
