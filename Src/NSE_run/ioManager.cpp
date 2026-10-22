@@ -80,7 +80,6 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
 #if AMREX_SPACEDIM == 3
     amrex::VisMF::Write(state.getVel(2), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", "vel_z"));
 #endif
-    amrex::VisMF::Write(state.getPres(), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", "pres"));
 
     // renaming and deleting older variants
     amrex::ParallelDescriptor::Barrier();
@@ -165,7 +164,6 @@ void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
 #if AMREX_SPACEDIM == 3
     amrex::VisMF::Read(init_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
 #endif
-    amrex::VisMF::Read(init_state.getPres(), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "pres"));
 
     amrex::Print() << "Restarted from: " << restart_dir << "\n";
 }

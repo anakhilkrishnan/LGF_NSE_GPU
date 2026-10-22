@@ -217,6 +217,7 @@ void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex
     // initializeSnugDomain()
     updateGeomBaDm(chk_ba);
     supp_ba = chk_supp_ba;
+    old_supp_ba = supp_ba;
 
     // redefine scratch variables onto new grid
     defineScratch();

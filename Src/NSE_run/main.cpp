@@ -67,11 +67,12 @@ void extendedMain()
     if (io_cfg.start_from_chk)
     {
         io.initializeFlowFieldFromChk(state_n);
+        workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
 
-        const amrex::BoxArray restart_supp_ba = dmgr.getSuppBoxArr();
         workspace.divU_max_norm = 0.0;
         workspace.divU_at_end_max_norm = computeDivUMaxNorm(state_n);
+        const amrex::BoxArray restart_supp_ba = dmgr.getSuppBoxArr(); // initialized to send as pointer to computeDivUMaxNorm
         workspace.divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &restart_supp_ba);
     }
     else
