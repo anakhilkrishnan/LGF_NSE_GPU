@@ -7,15 +7,20 @@
 
 struct SolverConfig
 {
+    // refinement parameters
+    int refine_ratio;
+    amrex::IntVect n_cell;
+    amrex::Real set_dt;
+
     // grid parameters
     // initial coarse search grid parameters
-    amrex::IntVect n_cell;
-    amrex::IntVect max_grid_size;
-
-    // fine grid parameters
-    int search_to_fine_ref_ratio;
+    int search_to_base_refine_ratio;
     amrex::IntVect n_cell_search;
     amrex::IntVect max_grid_size_search;
+
+    // base grid parameters
+    amrex::IntVect n_cell_base;
+    amrex::IntVect max_grid_size;
     int n_ghost;
     int n_ghost_max;
     int n_IF = 4;
@@ -28,7 +33,7 @@ struct SolverConfig
     // time stepping parameters
     int max_steps;
     amrex::Real t_start, t_stop;
-    amrex::Real set_dt, cfl;
+    amrex::Real set_dt_base, cfl;
 
     // physical parameters
     amrex::Real invRe;
@@ -41,11 +46,14 @@ struct SolverConfig
     void readInputs()
     {
         amrex::ParmParse pp;
-
+        pp.get("refine_ratio", refine_ratio);
         pp.getarr("n_cell", n_cell);
-        pp.getarr("max_grid_size", max_grid_size);
+        pp.get("set_dt", set_dt);
 
-        pp.get("search_to_fine_ref_ratio", search_to_fine_ref_ratio);
+        pp.get("search_to_base_refine_ratio", search_to_base_refine_ratio);
+
+        pp.getarr("n_cell_base", n_cell_base);
+        pp.getarr("max_grid_size", max_grid_size);
         pp.get("n_ghost", n_ghost);
         pp.get("n_ghost_max", n_ghost_max);
         pp.query("n_IF", n_IF);
@@ -59,7 +67,7 @@ struct SolverConfig
         pp.get("max_steps", max_steps);
         pp.get("t_start", t_start);
         pp.get("t_stop", t_stop);
-        pp.get("set_dt", set_dt);
+        pp.get("set_dt_base", set_dt_base);
         pp.get("cfl", cfl);  
 
         pp.get("invRe", invRe);
@@ -68,11 +76,23 @@ struct SolverConfig
 
         pp.get("n_lookup", n_lookup);
 
-        n_cell_search = n_cell / search_to_fine_ref_ratio;
-        max_grid_size_search = max_grid_size / search_to_fine_ref_ratio;
-
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_fine_ref_ratio == n_cell, "Search space refinement doesn't divide nicely!");
+        // alter base grid to match refinement ratio 
+        if (n_cell != (n_cell_base * refine_ratio))
+        {
+            amrex::Print() << "n_cell from inputs doesn't match requested refine ratio! Going ahead with n_cell = n_cell_base * refine_ratio, please update inputs file";
+            n_cell = n_cell_base * refine_ratio;
+        }
+        if (set_dt != (set_dt_base / refine_ratio))
+        {
+            amrex::Print() << "set_dt from inputs doesn't match requested refine ratio! Going ahead with set_dt = set_dt_base * refine_ratio, please update inputs file";
+            set_dt = set_dt_base / refine_ratio;
+        }
+        max_steps *= refine_ratio;
         
+        // compute search grid parameters
+        n_cell_search = n_cell / search_to_base_refine_ratio;
+        max_grid_size_search = max_grid_size / search_to_base_refine_ratio;
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_base_refine_ratio == n_cell, "Search space refinement doesn't divide nicely!");
     }
 };
 

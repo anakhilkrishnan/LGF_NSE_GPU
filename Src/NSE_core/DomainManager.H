@@ -50,7 +50,7 @@ class DomainManager
         int regrid_int;
 
         amrex::IntVect n_cell, max_grid_size;
-        int n_buffer_box, n_shed_box, search_to_fine_ref_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
+        int n_buffer_box, n_shed_box, search_to_base_refine_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
         amrex::RealVect dom_lo, dom_hi;
         amrex::Real supp_tag_eps;
 

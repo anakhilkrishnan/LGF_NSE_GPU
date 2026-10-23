@@ -17,6 +17,7 @@
 #include <cstdio>
 
 #include <IOConfig.H>
+#include <FreestreamVelocity.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
 
@@ -61,14 +62,19 @@ class IOManager
         // correct chkfile to use
         std::string better_dir;
 
+        // scratch from last read chkfile
+        int chk_refine_ratio;
+        amrex::BoxArray chk_ba;
+        amrex::BoxArray chk_supp_ba;
+        
         void whichChkDirBetter();
 
     public:
 
         IOManager(const IOConfig& config);
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
-        void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba);
-        void initializeFlowFieldFromChk(FlowField& init_state);
+        void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba_refined, amrex::BoxArray& chk_supp_ba_refined, const amrex::IntVect max_grid_size);
+        void initializeFlowFieldFromChk(FlowField& init_state, DomainManager& dmgr, ProjectionWorkspace& workspace);
         void writePlot(PlotKind kind, int step, amrex::Real time,
                        const FlowField& state, const DomainManager& dom_mgr);
         void writeRingDiagnostics(int step, amrex::Real time, amrex::Real dt, amrex::Real nu,

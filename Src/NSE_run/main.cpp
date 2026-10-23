@@ -48,14 +48,17 @@ void extendedMain()
     // check if BoxArray comes from domain search and initialization, or checkpoint
     if (io_cfg.start_from_chk)
     {
-        amrex::BoxArray chk_ba;
-        amrex::BoxArray chk_supp_ba;
-        io.initializeBoxArrFromChk(step_keeper, time_keeper, chk_ba, chk_supp_ba);
-        dmgr.restartSnugDomain(chk_ba, chk_supp_ba);
+        // if refine on restart is enabled, then the initializeBoxArrFromChk returns refined boxArrays
+        // plain chk_ba and chk_supp_ba are stored away in IOManager class
+        amrex::BoxArray chk_ba_refined, chk_supp_ba_refined;
+
+        // read boxArrays supp_ba and ba from checkpoint and recreate snug domain (geom, boxarrs, distmap)
+        io.initializeBoxArrFromChk(step_keeper, time_keeper, chk_ba_refined, chk_supp_ba_refined, sol_cfg.max_grid_size);
+        dmgr.restartSnugDomain(chk_ba_refined, chk_supp_ba_refined);
     }
     else
     {
-        // extract correct region and update geom, boxarr and distmap
+        // extract correct region and update geom, boxarrs and distmap
         dmgr.initializeSnugDomain(sol_cfg.t_start);
     }
 
@@ -66,7 +69,7 @@ void extendedMain()
 
     if (io_cfg.start_from_chk)
     {
-        io.initializeFlowFieldFromChk(state_n);
+        io.initializeFlowFieldFromChk(state_n, dmgr, workspace);
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
 

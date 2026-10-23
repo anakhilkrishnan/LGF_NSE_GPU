@@ -7,6 +7,9 @@
 
 struct IOConfig
 {
+    // Refinement parameters
+    int refine_ratio;
+
     // IO parameters
     bool write_plot = true;
     bool plot_only_support = false;
@@ -18,7 +21,7 @@ struct IOConfig
     bool start_from_chk = false;
 
     int plot_int = 100;
-    int n_files_per_MF = 32;
+    int n_files_per_MF = 4;
     int plot_dense_int = 1000;
     int chk_int = 20;
     int log_int = 1;
@@ -35,6 +38,8 @@ struct IOConfig
     void readInputs()
     {
         amrex::ParmParse pp;
+
+        pp.get("refine_ratio", refine_ratio);
 
         pp.query("write_plot", write_plot);
         pp.query("plot_pressure", plot_pressure);
@@ -59,6 +64,11 @@ struct IOConfig
         pp.query("log_int", log_int);
         pp.query("log_dir", log_dir);
         pp.query("log_prefix", log_prefix);
+
+        // alter plot/chk intervals based on refinement ratio
+        plot_int *= refine_ratio;
+        plot_dense_int *= refine_ratio;
+        chk_int *= refine_ratio;
     }
 };
 

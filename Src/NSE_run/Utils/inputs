@@ -1,7 +1,12 @@
 amrex.max_gpu_streams = 128
 
+# manual refinement parameters
+refine_factor = 1 # sets n_cell = n_cell_base x refine_factor
+n_cell = 320 320 320 # current resolution, only for assert, alter base value for effect
+set_dt = 0.01721 # current dt, only for assert, alter base value for effect
+
 # provide as many values as dimensions
-n_cell = 320 320 320
+n_cell_base = 320 320 320
 max_grid_size = 16 16 16
 search_domain_lo = -3.2 -3.2 -3.2
 search_domain_hi = 3.2 3.2 3.2
@@ -18,7 +23,7 @@ n_shed_box = 1
 max_steps = -1
 t_start = 0.0
 t_stop = 300.0
-set_dt = 0.01721
+set_dt_base = 0.01721
 cfl = 0.5 # not used
 
 invRe = 1.3333333333333333e-4

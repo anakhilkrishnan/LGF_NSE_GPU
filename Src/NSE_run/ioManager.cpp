@@ -1,5 +1,4 @@
 #include <IOManager.H>
-#include <FreestreamVelocity.H>
 
 #include <limits>
 
@@ -29,6 +28,7 @@ void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& c
 IOManager::IOManager(const IOConfig& config) : cfg(config)
 {
     better_dir = "";
+    chk_refine_ratio = 1;
 }
 
 void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba)
@@ -64,7 +64,7 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         std::ofstream HeaderFile(HeaderFileName, std::ofstream::out | std::ofstream::trunc);
 
         HeaderFile.precision(17);
-        HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n";
+        HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n" << cfg.refine_ratio << "\n";
         state.getPres().boxArray().writeOn(HeaderFile);
         HeaderFile << "\n";
         supp_ba.writeOn(HeaderFile);
@@ -128,7 +128,7 @@ void IOManager::whichChkDirBetter()
 }
 
 // reading BA data from checkpoint
-void IOManager::initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba, amrex::BoxArray& chk_supp_ba)
+void IOManager::initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba_refined, amrex::BoxArray& chk_supp_ba_refined, const amrex::IntVect max_grid_size)
 {
     whichChkDirBetter();
     std::string restart_dir = better_dir + cfg.chk_prefix;
@@ -144,28 +144,73 @@ void IOManager::initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::Box
     std::getline(is, line); // skipping heading "LGF_NSE_Checkpoint"
     is >> step;
     is >> time;
+    is >> chk_refine_ratio;
 
     // extracting BoxArray from chk file
     chk_ba.readFrom(is);
 
     // extracting supp_ba from chk file
     chk_supp_ba.readFrom(is);
+
+    // refine if necessary
+    if (cfg.refine_ratio <= chk_refine_ratio)
+    {
+        chk_ba_refined = chk_ba;
+        chk_supp_ba_refined = chk_supp_ba;
+
+        amrex::Print() << "Requested refine ratio <= current refine ratio, proceeding with no refinement!";
+    }
+    else 
+    {
+        AMREX_ALWAYS_ASSERT(cfg.refine_ratio % chk_refine_ratio == 0);
+        chk_ba_refined = amrex::refine(chk_ba, cfg.refine_ratio / chk_refine_ratio);
+        chk_ba_refined.maxSize(max_grid_size);
+        chk_supp_ba_refined = amrex::refine(chk_supp_ba, cfg.refine_ratio / chk_refine_ratio);
+        chk_supp_ba_refined.maxSize(max_grid_size);
+
+        amrex::Print() << "Creating boxArrays with refinement ratio: " << cfg.refine_ratio << "\n";
+    }
 }
 
-void IOManager::initializeFlowFieldFromChk(FlowField& init_state)
+void IOManager::initializeFlowFieldFromChk(FlowField& init_state, DomainManager& dmgr, ProjectionWorkspace& workspace)
 {
-    std::string restart_dir = better_dir + cfg.chk_prefix;
-
-    // Read the native MultiFabs into the newly sized FlowField
-    amrex::VisMF::Read(init_state.getVel(0), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_x"));
-#if AMREX_SPACEDIM >= 2
-    amrex::VisMF::Read(init_state.getVel(1), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_y"));
-#endif
+    if (cfg.refine_ratio <= chk_refine_ratio)
+    {
+        // No refinement; Read the checkpoint files directly into init_state
+        std::string restart_dir = better_dir + cfg.chk_prefix;
+        amrex::VisMF::Read(init_state.getVel(0), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_x"));
+        amrex::VisMF::Read(init_state.getVel(1), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_y"));
 #if AMREX_SPACEDIM == 3
-    amrex::VisMF::Read(init_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
+        amrex::VisMF::Read(init_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
 #endif
+         amrex::Print() << "Restarted from: " << restart_dir << "without refinement\n";
+    }
+    else 
+    {
+        // create scratch FlowField that matches the restart data
+        amrex::DistributionMapping chk_dm(chk_ba);
+        FlowField chk_state(init_state.getGeom(), chk_ba, chk_dm, init_state.getPres().nComp(), init_state.getPres().nGrow());
 
-    amrex::Print() << "Restarted from: " << restart_dir << "\n";
+        // Read the checkpoint files into scratch, for refining
+        std::string restart_dir = better_dir + cfg.chk_prefix;
+        amrex::VisMF::Read(chk_state.getVel(0), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_x"));
+        amrex::VisMF::Read(chk_state.getVel(1), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_y"));
+#if AMREX_SPACEDIM == 3
+        amrex::VisMF::Read(chk_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
+#endif
+        chk_state.setBoundary();
+
+        // construct scratch vorticity at chkfile resolution
+        amrex::Array<amrex::MultiFab, N_VORT> vort_chk = computeVorticity(chk_state);
+
+        // refine vorticity
+        amrex::Array<amrex::MultiFab, N_VORT> vort_init;
+
+        // perform vor2vel and update into init_state
+        dmgr.vor2vel(init_state.getVelArr(), vort_init, workspace.lgf_poisson_solver);
+
+        amrex::Print() << "Restarted from: " << restart_dir << "with refinement ratio: " << cfg.refine_ratio << "\n";
+    }
 }
 
 // Switches AMReX's FAB output format for the lifetime of the object, then restores it, so only

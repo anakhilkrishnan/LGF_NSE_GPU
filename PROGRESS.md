@@ -31,7 +31,7 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 16. Allow for refinement at each restart (current idea: refine vorticity using a tensor product cubic interpolation, perform vor2vel).
 17. ~~During search tagging, check if any tagged boxes are on the edge of the search domain. If so, abort~~. 
 18. Add component-wise vorticity to plotfiles (!! Decide if necessary first !!).
-
+19. Consider switching IO_int type variables to physical time instead of step count.
 
 ## Yet to decide
 

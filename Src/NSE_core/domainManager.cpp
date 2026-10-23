@@ -21,7 +21,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     dom_hi = config.dom_hi;
     n_buffer_box = config.n_buffer_box;
     n_shed_box = config.n_shed_box;
-    search_to_fine_ref_ratio = config.search_to_fine_ref_ratio;
+    search_to_base_refine_ratio = config.search_to_base_refine_ratio;
     supp_tag_eps = config.supp_tag_eps;
 
     // rules on what can be initialized and what can't be
@@ -169,7 +169,7 @@ void DomainManager::initializeSnugDomain(amrex::Real time)
                     << " inside the search domain " << geom.ProbDomain() << "\n";
 
     // refine to desired resolution
-    supp_ba.refine(search_to_fine_ref_ratio);
+    supp_ba.refine(search_to_base_refine_ratio);
     old_supp_ba = supp_ba;
 
     // pad with buffer and update
