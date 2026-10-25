@@ -17,6 +17,7 @@
 #include <cstdio>
 
 #include <IOConfig.H>
+#include <SolverConfig.H>
 #include <FreestreamVelocity.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
@@ -49,6 +50,21 @@ inline ChkStatus readCheckpointStatus(const std::string& chk_dir)
     return status;
 }
 
+// struct for reading and using chk metadata from grid.dat or inputs.used files
+struct ChkMetadata
+{
+    std::string curr_dir;
+    int version = 0;
+    int step = 0;
+    amrex::Real time = 0.0;
+    amrex::BoxArray ba, supp_ba;
+    amrex::IntVect n_cell_base, n_cell;
+    int refine_ratio = 1;
+    amrex::ReaVect prob_lo, prob_hi;
+    amrex::Real dt = 0.0;
+    amrex::Geometry geom;
+}
+
 // which plot to write: see IOManager::writePlot
 enum class PlotKind { Lean, Dense, RegridPre, RegridPost };
 
@@ -57,23 +73,19 @@ class IOManager
     private:
 
         // simulation configuration object, passed by reference
-        const IOConfig& cfg;
+        const IOConfig& io_cfg;
+        const SovlerConfig& sol_cfg;
         
         // correct chkfile to use
         std::string better_dir;
-
-        // scratch from last read chkfile
-        int chk_refine_ratio;
-        amrex::BoxArray chk_ba;
-        amrex::BoxArray chk_supp_ba;
         
         void whichChkDirBetter();
 
     public:
 
-        IOManager(const IOConfig& config);
+        IOManager(const IOConfig& io_config, const SolverConfig& sol_config);
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
-        void initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba_refined, amrex::BoxArray& chk_supp_ba_refined, const amrex::IntVect max_grid_size);
+        ChkMetadata readChkMetadata();
         void initializeFlowFieldFromChk(FlowField& init_state, DomainManager& dmgr, ProjectionWorkspace& workspace);
         void writePlot(PlotKind kind, int step, amrex::Real time,
                        const FlowField& state, const DomainManager& dom_mgr);

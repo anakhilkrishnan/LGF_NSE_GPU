@@ -11,6 +11,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
 
     // initializing domain parameters needed from config
+    refine_ratio = config.refine_ratio;
     n_cell = config.n_cell;
     max_grid_size = config.max_grid_size;
     n_lookup = config.n_lookup;
@@ -208,13 +209,13 @@ void DomainManager::initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poi
     }
 }
 
-void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba)
+void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba, const int chk_refine_ratio)
 {
     BL_PROFILE("<IO> restartSnugDomain()")
-    // the checkpoint's BoxArray already encodes the fine-resolution Dxsoln
-    // (support + buffer) from when the checkpoint was written. Adopt it directly
-    // and rebuild geom/ba/dm around it, bypassing the search-grid path in
-    // initializeSnugDomain()
+    
+    // the chk file contains the boxArray that was used earlier; decide if refinement is needed and start up accordingly
+    if (chk_refine_ratio)
+
     updateGeomBaDm(chk_ba);
     supp_ba = chk_supp_ba;
     old_supp_ba = supp_ba;

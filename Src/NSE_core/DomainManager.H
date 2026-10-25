@@ -24,6 +24,10 @@
 class DomainManager
 {
     private:
+
+        // the overall refinement ratio, against n_cell_base
+        int refine_ratio;
+        
         // the Geometry, BoxArray and DistributionMapping that refer to Dxsoln
         // along with the box_tag_arr that only represents Dsupp
         amrex::Geometry geom;

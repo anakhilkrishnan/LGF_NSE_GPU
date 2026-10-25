@@ -25,10 +25,9 @@ void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& c
     }
 }
 
-IOManager::IOManager(const IOConfig& config) : cfg(config)
+IOManager::IOManager(const IOConfig& io_config, const SolverConfig& sol_config) : io_cfg(io_config), sol_cfg(sol_config)
 {
     better_dir = "";
-    chk_refine_ratio = 1;
 }
 
 void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba)
@@ -36,11 +35,11 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
     // PENDING: Modify to write checkpoints for AMR data
 
     // writing to either main or alt checkpoint
-    std::string cur_chkdir = writeMainChk ? cfg.chk_dir : cfg.altchk_dir;
+    std::string cur_chkdir = writeMainChk ? io_cfg.chk_dir : io_cfg.altchk_dir;
 
     // variables for filenames to be used
     std::string status_file = cur_chkdir + "/status.dat";
-    std::string final_write_dir = cur_chkdir + cfg.chk_prefix;
+    std::string final_write_dir = cur_chkdir + io_cfg.chk_prefix;
     std::string temp_write_dir= final_write_dir + "_temp";
 
     amrex::Print() << "Writing checkpoint data to: " << cur_chkdir << "\n";
@@ -64,7 +63,7 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         std::ofstream HeaderFile(HeaderFileName, std::ofstream::out | std::ofstream::trunc);
 
         HeaderFile.precision(17);
-        HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n" << cfg.refine_ratio << "\n";
+        HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n" << io_cfg.refine_ratio << "\n";
         state.getPres().boxArray().writeOn(HeaderFile);
         HeaderFile << "\n";
         supp_ba.writeOn(HeaderFile);
@@ -105,21 +104,21 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
 // directory to compare main and alt checkpoints
 void IOManager::whichChkDirBetter()
 {
-    ChkStatus main_status = readCheckpointStatus(cfg.chk_dir);
-    ChkStatus alt_status = readCheckpointStatus(cfg.altchk_dir);
+    ChkStatus main_status = readCheckpointStatus(io_cfg.chk_dir);
+    ChkStatus alt_status = readCheckpointStatus(io_cfg.altchk_dir);
 
     // checking for most recent checkpoint, provided both are safe
     if (main_status.is_safe == 1 && alt_status.is_safe == 1) 
     {
-        better_dir = (main_status.step > alt_status.step) ? cfg.chk_dir : cfg.altchk_dir;
+        better_dir = (main_status.step > alt_status.step) ? io_cfg.chk_dir : io_cfg.altchk_dir;
     }
     else if (main_status.is_safe == 1)
     {
-        better_dir = cfg.chk_dir;
+        better_dir = io_cfg.chk_dir;
     }
     else if (alt_status.is_safe == 1)
     {
-        better_dir = cfg.altchk_dir;
+        better_dir = io_cfg.altchk_dir;
     }
     else
     {
@@ -127,90 +126,68 @@ void IOManager::whichChkDirBetter()
     }
 }
 
-// reading BA data from checkpoint
-void IOManager::initializeBoxArrFromChk(int& step, amrex::Real& time, amrex::BoxArray& chk_ba_refined, amrex::BoxArray& chk_supp_ba_refined, const amrex::IntVect max_grid_size)
+ChkMetadata IOManager::readChkMetadata()
 {
+    // read grid.dat file and populate ChkMetadata
     whichChkDirBetter();
-    std::string restart_dir = better_dir + cfg.chk_prefix;
-    amrex::Print() << "Restarting from: " << restart_dir << "\n";
+    ChkMetadata chk;
+    chk.curr_dir = better_dir + io_cfg.chk_prefix;
+    amrex::Print() << "Restarting with metadata from: " << chk.curr_dir << "\n";
 
-    std::string HeaderFileName(restart_dir + "/Header");
-    amrex::Vector<char> fileCharPtr;
-    amrex::ParallelDescriptor::ReadAndBcastFile(HeaderFileName, fileCharPtr);
-    std::string fileCharPtrString(fileCharPtr.dataPtr());
-    std::istringstream is(fileCharPtrString, std::istringstream::in);
+    // parse header file first
+    amrex::Vector<char> buf;
+    amrex::ParallelDescriptor::ReadAndBcastFile(chk.curr_dir + "/Header", buf);
+    std::istringstream is(std::string(buf.dataPtr()));
+    std::string tag;
+    std::getline(is, tag);
+    is >> chk.step >> chk.time;
+    chk.ba.readFrom(is);
+    chk.supp_ba.readFrom(is);
 
-    std::string line;
-    std::getline(is, line); // skipping heading "LGF_NSE_Checkpoint"
-    is >> step;
-    is >> time;
-    is >> chk_refine_ratio;
-
-    // extracting BoxArray from chk file
-    chk_ba.readFrom(is);
-
-    // extracting supp_ba from chk file
-    chk_supp_ba.readFrom(is);
-
-    // refine if necessary
-    if (cfg.refine_ratio <= chk_refine_ratio)
+    // since grid.dat was introduced only in late October 2026, runs from before will not have said file
+    if (tag == "LGF_NSE_Checkpoint_v2")
     {
-        chk_ba_refined = chk_ba;
-        chk_supp_ba_refined = chk_supp_ba;
-
-        amrex::Print() << "Requested refine ratio <= current refine ratio, proceeding with no refinement!";
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(amrex::FileSystem::Exists(chk.dir + "/grid.dat"),
+            "restart: v2 checkpoint is missing grid.dat");
+        amrex::ParmParse::addfile(chk.dir + "/grid.dat");     // collective; keys land under "chk."
+        amrex::ParmParse pp("chk");
+        pp.getarr("n_cell_base", chk.n_cell_base);
+        pp.get("refine_ratio", chk.refine_ratio);
+        pp.getarr("n_cell", chk.n_cell);
+        pp.getarr("prob_lo", chk.prob_lo);
+        pp.getarr("prob_hi", chk.prob_hi);
+        pp.get("dt", chk.dt);
+        chk.format = 2;
     }
-    else 
+    else if (tag == "LGF_NSE_Checkpoint")
     {
-        AMREX_ALWAYS_ASSERT(cfg.refine_ratio % chk_refine_ratio == 0);
-        chk_ba_refined = amrex::refine(chk_ba, cfg.refine_ratio / chk_refine_ratio);
-        chk_ba_refined.maxSize(max_grid_size);
-        chk_supp_ba_refined = amrex::refine(chk_supp_ba, cfg.refine_ratio / chk_refine_ratio);
-        chk_supp_ba_refined.maxSize(max_grid_size);
-
-        amrex::Print() << "Creating boxArrays with refinement ratio: " << cfg.refine_ratio << "\n";
+        amrex::Print() << "WARNING: legacy checkpoint without grid.dat; assuming refine_ratio 1"
+                          " and the current inputs' n_cell_base and domain\n";
+        chk.n_cell_base = sol_cfg.n_cell_base;
+        chk.refine_ratio = 1;
+        chk.n_cell = sol_cfg.n_cell_base;
+        chk.prob_lo = sol_cfg.dom_lo;
+        chk.prob_hi = sol_cfg.dom_hi;
+        chk.format = 1;
     }
+    else { amrex::Abort("restart: unrecognised checkpoint header tag '" + tag + "'"); }
+
+    // same construction as updateGeomBaDm, at the checkpoint's own resolution
+    amrex::Box domain(amrex::IntVect(0), chk.n_cell - 1);
+    amrex::RealBox real_box(chk.prob_lo.dataPtr(), chk.prob_hi.dataPtr());
+    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 0);
+    chk.geom.define(domain, &real_box, amrex::CoordSys::cartesian, is_periodic.data());
+    return chk;
 }
 
-void IOManager::initializeFlowFieldFromChk(FlowField& init_state, DomainManager& dmgr, ProjectionWorkspace& workspace)
+void IOManager::readChkData(const ChkMetadata& chk, FlowField& chk_state)
 {
-    if (cfg.refine_ratio <= chk_refine_ratio)
+    static const char* names[3] = {"vel_x", "vel_y", "vel_z"};
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        // No refinement; Read the checkpoint files directly into init_state
-        std::string restart_dir = better_dir + cfg.chk_prefix;
-        amrex::VisMF::Read(init_state.getVel(0), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_x"));
-        amrex::VisMF::Read(init_state.getVel(1), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_y"));
-#if AMREX_SPACEDIM == 3
-        amrex::VisMF::Read(init_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
-#endif
-         amrex::Print() << "Restarted from: " << restart_dir << "without refinement\n";
+        amrex::VisMF::Read(init_state.getVel(idim), amrex::MultiFabFileFullPrefix(0, chk.curr_dir, "Level_", names[d]));
     }
-    else 
-    {
-        // create scratch FlowField that matches the restart data
-        amrex::DistributionMapping chk_dm(chk_ba);
-        FlowField chk_state(init_state.getGeom(), chk_ba, chk_dm, init_state.getPres().nComp(), init_state.getPres().nGrow());
-
-        // Read the checkpoint files into scratch, for refining
-        std::string restart_dir = better_dir + cfg.chk_prefix;
-        amrex::VisMF::Read(chk_state.getVel(0), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_x"));
-        amrex::VisMF::Read(chk_state.getVel(1), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_y"));
-#if AMREX_SPACEDIM == 3
-        amrex::VisMF::Read(chk_state.getVel(2), amrex::MultiFabFileFullPrefix(0, restart_dir, "Level_", "vel_z"));
-#endif
-        chk_state.setBoundary();
-
-        // construct scratch vorticity at chkfile resolution
-        amrex::Array<amrex::MultiFab, N_VORT> vort_chk = computeVorticity(chk_state);
-
-        // refine vorticity
-        amrex::Array<amrex::MultiFab, N_VORT> vort_init;
-
-        // perform vor2vel and update into init_state
-        dmgr.vor2vel(init_state.getVelArr(), vort_init, workspace.lgf_poisson_solver);
-
-        amrex::Print() << "Restarted from: " << restart_dir << "with refinement ratio: " << cfg.refine_ratio << "\n";
-    }
+    amrex::Print() << "Read chk file data from: " << chk.curr_dir << "\n";
 }
 
 // Switches AMReX's FAB output format for the lifetime of the object, then restores it, so only
@@ -243,14 +220,14 @@ void IOManager::writePlot(PlotKind kind, int step, amrex::Real time,
     FabFormatGuard single_precision(amrex::FABio::FAB_NATIVE_32);
 
     const bool dense        = (kind != PlotKind::Lean);
-    const bool with_pres    = dense || cfg.plot_pressure;
+    const bool with_pres    = dense || io_cfg.plot_pressure;
     const bool with_refresh = (kind == PlotKind::RegridPost);
-    const bool restrict_ba  = (kind == PlotKind::Lean) && cfg.plot_only_support;
+    const bool restrict_ba  = (kind == PlotKind::Lean) && io_cfg.plot_only_support;
 
     const char* suffix = (kind == PlotKind::Lean)      ? ""
                        : (kind == PlotKind::Dense)     ? "_dense"
                        : (kind == PlotKind::RegridPre) ? "_regrid_pre" : "_regrid_post";
-    const std::string plotfile_name = amrex::Concatenate(cfg.plot_dir + cfg.plot_prefix, step, 5) + suffix;
+    const std::string plotfile_name = amrex::Concatenate(io_cfg.plot_dir + io_cfg.plot_prefix, step, 5) + suffix;
 
     const amrex::BoxArray& ba = state.getPres().boxArray();
     const amrex::DistributionMapping& dm = state.getPres().DistributionMap();
@@ -490,9 +467,9 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
 
     if (amrex::ParallelDescriptor::IOProcessor())
     {
-        const std::string fname = cfg.log_dir + "/ring_diagnostics.txt";
+        const std::string fname = io_cfg.log_dir + "/ring_diagnostics.txt";
         const bool new_file = !amrex::FileSystem::Exists(fname);
-        if (new_file) { amrex::UtilCreateDirectory(cfg.log_dir, 0755); }
+        if (new_file) { amrex::UtilCreateDirectory(io_cfg.log_dir, 0755); }
 
         std::ofstream ofs(fname, std::ios::out | std::ios::app);
         ofs << std::scientific << std::setprecision(16);

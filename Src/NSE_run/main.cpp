@@ -22,6 +22,12 @@ void extendedMain()
 
     amrex::Gpu::streamSynchronize();
     auto overall_start_time = amrex::second();
+
+    // creating solver configuration object and reading inputs
+    SolverConfig sol_cfg;
+    sol_cfg.readInputs();
+
+    DomainManager dmgr(sol_cfg);
     
     // creating io config object and reading inputs
     IOConfig io_cfg;
@@ -32,12 +38,6 @@ void extendedMain()
 
     // initializing io manager object
     IOManager io(io_cfg);
-
-    // creating solver configuration object and reading inputs
-    SolverConfig sol_cfg;
-    sol_cfg.readInputs();
-
-    DomainManager dmgr(sol_cfg);
 
     // creating timestepping variables beforehand
     amrex::Real time_keeper = 0.0;
