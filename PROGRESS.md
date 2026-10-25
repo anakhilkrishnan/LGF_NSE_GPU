@@ -32,6 +32,8 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 17. ~~During search tagging, check if any tagged boxes are on the edge of the search domain. If so, abort~~. 
 18. Add component-wise vorticity to plotfiles (!! Decide if necessary first !!).
 19. Consider switching IO_int type variables to physical time instead of step count.
+20. Fix the GPU job script for PARAM Rudra (check ThreeVortexRings Claude thread).
+21. Make the CPU version OpenMP compatible (idea is to have 2 ranks per node, 1 per socket, similar to GPU setup).
 
 ## Yet to decide
 
