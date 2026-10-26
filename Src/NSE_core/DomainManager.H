@@ -16,6 +16,7 @@
 #include <limits>
 #include <vector>
 
+#include <Prolongation.H>
 #include <SolverConfig.H>
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
