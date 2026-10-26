@@ -146,9 +146,6 @@ void DomainManager::initializeSnugDomain(amrex::Real time)
     // setBoundary() call not needed as vor2vel handles ghost cells as well
 
     computeSuppBoxArr(search_state, time, false); // can't shed outer layer as it has never been tagged before
-
-    // supp_ba can never be empty
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!supp_ba.empty(), "initializeSnugDomain: no vorticity tagged in the search domain");
     
     // check if search domain was large enough to capture the support region,
     // abort if not checking using bounding box of supp_ba grown by 1; if grown
@@ -391,6 +388,11 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, amrex::Real time, 
     }
 #endif
 #endif
+
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!supp_ba.empty(),
+    "checkAndUpdateSnugDomain: support vanished (no cell above support_threshold); "
+    "the velocity field is zero or the threshold is wrong");
+
 }
 
 void DomainManager::checkAndUpdateSnugDomain(const FlowField& state, amrex::Real time)

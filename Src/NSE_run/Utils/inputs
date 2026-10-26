@@ -1,9 +1,13 @@
 amrex.max_gpu_streams = 128
 
-# manual refinement parameters
-refine_ratio = 1 # sets n_cell = n_cell_base x refine_factor
-n_cell = 320 320 320 # current resolution, only for assert, alter base value for effect
-set_dt = 0.01721 # current dt, only for assert, alter base value for effect
+# manual refinement parameter (sets n_cell = n_cell_base x refine_ratio)
+refine_ratio = 1 
+
+# current resolution, only for assert, alter base value for effect
+n_cell = 320 320 320 
+
+# current dt, only for assert, alter base value for effect
+set_dt = 0.01721 
 
 # provide as many values as dimensions
 n_cell_base = 320 320 320

@@ -96,6 +96,12 @@ struct SolverConfig
         max_grid_size_search = max_grid_size / search_to_fine_refine_ratio;
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_fine_refine_ratio == n_cell, "Search space refinement doesn't divide n_cell nicely!");
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(max_grid_size_search * search_to_fine_refine_ratio == max_grid_size, "Search space refinement doesn't divide max_grid_size nicely!");
+
+        // print out final grid
+        amrex::Print() << "Resolution: refine_ratio " << refine_ratio
+               << " | n_cell " << n_cell << " (base " << n_cell_base << ")"
+               << " | n_cell_search " << n_cell_search
+               << " | dt " << set_dt << " (base " << set_dt_base << ")\n";
     }
 };
 
