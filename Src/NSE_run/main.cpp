@@ -31,30 +31,34 @@ void extendedMain()
     
     // creating io config object and reading inputs
     IOConfig io_cfg;
-    io_cfg.readInputs(); 
+    io_cfg.readInputs(sol_cfg.refine_ratio); 
 
     // force VisMF to use only n_files_per_MF number of files for each plotdir
     amrex::VisMF::SetNOutFiles(io_cfg.n_files_per_MF);
 
     // initializing io manager object
-    IOManager io(io_cfg);
+    IOManager io(io_cfg, sol_cfg);
 
     // creating timestepping variables beforehand
     amrex::Real time_keeper = 0.0;
     amrex::Real dt_master = sol_cfg.set_dt; // master, not to be confused with workspace.dt
     int step_keeper = 0;
 
+    // checkpoint metadata
+    ChkMetadata chk;
+    int transfer_ratio = 1; // ratio of cfg.refine_ratio to chk.refine_ratio
     
     // check if BoxArray comes from domain search and initialization, or checkpoint
     if (io_cfg.start_from_chk)
     {
-        // if refine on restart is enabled, then the initializeBoxArrFromChk returns refined boxArrays
-        // plain chk_ba and chk_supp_ba are stored away in IOManager class
-        amrex::BoxArray chk_ba_refined, chk_supp_ba_refined;
+        chk = io.readChkMetadata();
+        transfer_ratio = restartTransferRatio(chk, sol_cfg);
 
-        // read boxArrays supp_ba and ba from checkpoint and recreate snug domain (geom, boxarrs, distmap)
-        io.initializeBoxArrFromChk(step_keeper, time_keeper, chk_ba_refined, chk_supp_ba_refined, sol_cfg.max_grid_size);
-        dmgr.restartSnugDomain(chk_ba_refined, chk_supp_ba_refined);
+        step_keeper = chk.step * transfer_ratio;   // steps of the current dt since t_start
+        time_keeper = chk.time;
+
+        // transfer ratio determins if refinement happens
+        dmgr.restartSnugDomain(chk.ba, chk.supp_ba, transfer_ratio);
     }
     else
     {
@@ -69,7 +73,20 @@ void extendedMain()
 
     if (io_cfg.start_from_chk)
     {
-        io.initializeFlowFieldFromChk(state_n, dmgr, workspace);
+        if (transfer_ratio == 1)
+        {
+            // no refinement needed, directly read chkdata and store in state_n
+            io.readChkData(chk, state_n);
+        }
+        else
+        {
+            FlowField chk_state(chk.geom, chk.ba, amrex::DistributionMapping(chk.ba), sol_cfg.n_comp, sol_cfg.n_ghost);
+            io.readChkData(chk, chk_state);
+            chk_state.setBoundary();
+            dmgr.refineVelField(state_n, chk_state, transfer_ratio, workspace.lgf_poisson_solver);
+        }
+
+        // initialize pressure fields
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
 

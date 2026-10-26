@@ -7,8 +7,6 @@
 
 struct IOConfig
 {
-    // Refinement parameters
-    int refine_ratio;
 
     // IO parameters
     bool write_plot = true;
@@ -35,11 +33,9 @@ struct IOConfig
     std::string chk_prefix = "/chk";
     std::string log_prefix = "/log.txt";
 
-    void readInputs()
+    void readInputs(int refine_ratio)
     {
         amrex::ParmParse pp;
-
-        pp.get("refine_ratio", refine_ratio);
 
         pp.query("write_plot", write_plot);
         pp.query("plot_pressure", plot_pressure);

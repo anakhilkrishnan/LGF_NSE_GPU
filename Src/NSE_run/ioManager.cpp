@@ -2,6 +2,23 @@
 
 #include <limits>
 
+namespace
+{
+    // file scope only
+
+    // names of checkpoint fields, used by both readChkData and writeChkFiles
+    const char* vel_file_names[3] = {"vel_x", "vel_y", "vel_z"};
+
+    // Switches AMReX's FAB output format for the lifetime of the object, then restores it, so only
+    // plotfiles are written in single precision (checkpoints use the same VisMF path and stay double).
+    struct FabFormatGuard
+    {
+        amrex::FABio::Format saved = amrex::FArrayBox::getFormat();
+        explicit FabFormatGuard (amrex::FABio::Format fmt) { amrex::FArrayBox::setFormat(fmt); }
+        ~FabFormatGuard () { amrex::FArrayBox::setFormat(saved); }
+    };
+}
+
 void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& cc, int scomp)
 {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(cc.nGrowVect().allGE(1), "averageCellToNode: cc needs >= 1 ghost");
@@ -63,7 +80,7 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         std::ofstream HeaderFile(HeaderFileName, std::ofstream::out | std::ofstream::trunc);
 
         HeaderFile.precision(17);
-        HeaderFile << "LGF_NSE_Checkpoint\n" << step << "\n" << time << "\n" << io_cfg.refine_ratio << "\n";
+        HeaderFile << "LGF_NSE_Checkpoint_v2\n" << step << "\n" << time << "\n";
         state.getPres().boxArray().writeOn(HeaderFile);
         HeaderFile << "\n";
         supp_ba.writeOn(HeaderFile);
@@ -71,14 +88,35 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         HeaderFile.close();
     }
 
+    // write grid.dat and inputs dump table
+    if (amrex::ParallelDescriptor::IOProcessor())
+    {
+        // record what the run actually used: n_cell and domain from the state's Geometry
+        const amrex::Geometry& g = state.getGeom();
+        std::ofstream ofs(temp_write_dir + "/grid.dat");
+        ofs.precision(17);
+        auto put = [&](const char* key, auto const& v) {
+            ofs << "chk." << key << " =";
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) { ofs << " " << v[d]; }
+            ofs << "\n";
+        };
+        ofs << "# LGF-NSE checkpoint grid description\n";
+        put("n_cell_base", sol_cfg.n_cell_base);
+        ofs << "chk.refine_ratio = " << sol_cfg.refine_ratio << "\n";
+        put("n_cell",  g.Domain().length());
+        put("prob_lo", g.ProbLo());
+        put("prob_hi", g.ProbHi());
+        ofs << "chk.dt = " << sol_cfg.set_dt << "\n";
+
+        std::ofstream inp(temp_write_dir + "/inputs.used");
+        amrex::ParmParse::dumpTable(inp, true);
+    }
+
     // copying MultiFabs of importance (those that need previous time step data)
-    amrex::VisMF::Write(state.getVel(0), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", "vel_x"));
-#if AMREX_SPACEDIM >= 2
-    amrex::VisMF::Write(state.getVel(1), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", "vel_y"));
-#endif
-#if AMREX_SPACEDIM == 3
-    amrex::VisMF::Write(state.getVel(2), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", "vel_z"));
-#endif
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        amrex::VisMF::Write(state.getVel(idim), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", vel_file_names[idim]));
+    }
 
     // renaming and deleting older variants
     amrex::ParallelDescriptor::Barrier();
@@ -147,9 +185,9 @@ ChkMetadata IOManager::readChkMetadata()
     // since grid.dat was introduced only in late October 2026, runs from before will not have said file
     if (tag == "LGF_NSE_Checkpoint_v2")
     {
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(amrex::FileSystem::Exists(chk.dir + "/grid.dat"),
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(amrex::FileSystem::Exists(chk.curr_dir + "/grid.dat"),
             "restart: v2 checkpoint is missing grid.dat");
-        amrex::ParmParse::addfile(chk.dir + "/grid.dat");     // collective; keys land under "chk."
+        amrex::ParmParse::addfile(chk.curr_dir + "/grid.dat");     // collective; keys land under "chk."
         amrex::ParmParse pp("chk");
         pp.getarr("n_cell_base", chk.n_cell_base);
         pp.get("refine_ratio", chk.refine_ratio);
@@ -157,7 +195,7 @@ ChkMetadata IOManager::readChkMetadata()
         pp.getarr("prob_lo", chk.prob_lo);
         pp.getarr("prob_hi", chk.prob_hi);
         pp.get("dt", chk.dt);
-        chk.format = 2;
+        chk.version = 2;
     }
     else if (tag == "LGF_NSE_Checkpoint")
     {
@@ -168,7 +206,7 @@ ChkMetadata IOManager::readChkMetadata()
         chk.n_cell = sol_cfg.n_cell_base;
         chk.prob_lo = sol_cfg.dom_lo;
         chk.prob_hi = sol_cfg.dom_hi;
-        chk.format = 1;
+        chk.version = 1;
     }
     else { amrex::Abort("restart: unrecognised checkpoint header tag '" + tag + "'"); }
 
@@ -182,24 +220,11 @@ ChkMetadata IOManager::readChkMetadata()
 
 void IOManager::readChkData(const ChkMetadata& chk, FlowField& chk_state)
 {
-    static const char* names[3] = {"vel_x", "vel_y", "vel_z"};
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        amrex::VisMF::Read(init_state.getVel(idim), amrex::MultiFabFileFullPrefix(0, chk.curr_dir, "Level_", names[d]));
+        amrex::VisMF::Read(chk_state.getVel(idim), amrex::MultiFabFileFullPrefix(0, chk.curr_dir, "Level_", vel_file_names[idim]));
     }
     amrex::Print() << "Read chk file data from: " << chk.curr_dir << "\n";
-}
-
-// Switches AMReX's FAB output format for the lifetime of the object, then restores it, so only
-// plotfiles are written in single precision (checkpoints use the same VisMF path and stay double).
-namespace
-{
-    struct FabFormatGuard
-    {
-        amrex::FABio::Format saved = amrex::FArrayBox::getFormat();
-        explicit FabFormatGuard (amrex::FABio::Format fmt) { amrex::FArrayBox::setFormat(fmt); }
-        ~FabFormatGuard () { amrex::FArrayBox::setFormat(saved); }
-    };
 }
 
 // One plot writer; the kind selects the fields and the filename suffix.

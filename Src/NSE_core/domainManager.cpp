@@ -11,7 +11,6 @@ DomainManager::DomainManager(const SolverConfig& config)
     regrid_int = config.regrid_int; // TEMP tuning parameter for now
 
     // initializing domain parameters needed from config
-    refine_ratio = config.refine_ratio;
     n_cell = config.n_cell;
     max_grid_size = config.max_grid_size;
     n_lookup = config.n_lookup;
@@ -22,7 +21,7 @@ DomainManager::DomainManager(const SolverConfig& config)
     dom_hi = config.dom_hi;
     n_buffer_box = config.n_buffer_box;
     n_shed_box = config.n_shed_box;
-    search_to_base_refine_ratio = config.search_to_base_refine_ratio;
+    search_to_fine_refine_ratio = config.search_to_fine_refine_ratio;
     supp_tag_eps = config.supp_tag_eps;
 
     // rules on what can be initialized and what can't be
@@ -120,7 +119,7 @@ void DomainManager::updateGeomBaDm(const amrex::BoxArray& new_ba)
 
 void DomainManager::initializeSnugDomain(amrex::Real time)
 {
-    BL_PROFILE("<Compute>initializeSnugDomain()")
+    BL_PROFILE("<Compute> initializeSnugDomain()")
     // create coarse multifab to store velocity and vorticity pass them for
     // tagging use tag information to update Geom, BoxArr, DistMap; IMPORTANT:
     // refine Geom, BoxArr and DistMap to match desired resolution
@@ -170,7 +169,7 @@ void DomainManager::initializeSnugDomain(amrex::Real time)
                     << " inside the search domain " << geom.ProbDomain() << "\n";
 
     // refine to desired resolution
-    supp_ba.refine(search_to_base_refine_ratio);
+    supp_ba.refine(search_to_fine_refine_ratio);
     old_supp_ba = supp_ba;
 
     // pad with buffer and update
@@ -178,12 +177,56 @@ void DomainManager::initializeSnugDomain(amrex::Real time)
     growBoxArr(xsoln_ba, n_buffer_box * max_grid_size, max_grid_size);
     updateGeomBaDm(xsoln_ba);
 
+    // check if refined space matches coarse search space
+    const amrex::RealBox fine_rbox(supp_ba.minimalBox(), geom.CellSize(), geom.ProbLo());
+    for (int d = 0; d < AMREX_SPACEDIM; ++d)
+    {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            std::abs(fine_rbox.lo(d) - supp_rbox.lo(d)) < 0.5 * geom.CellSize(d) &&
+            std::abs(fine_rbox.hi(d) - supp_rbox.hi(d)) < 0.5 * geom.CellSize(d),
+            "initializeSnugDomain: refined support does not cover the searched region (search/fine ratio mismatch?)");
+    }
+
+    // redefine scratch variables onto new grid
+    defineScratch();
+}
+
+void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba, const int transfer_ratio)
+{
+    BL_PROFILE("<Compute> restartSnugDomain()")
+    
+    if (transfer_ratio == 1)
+    {
+        // no refinement needed, chk_ba and chk_supp_ba directly used
+        updateGeomBaDm(chk_ba);
+        supp_ba = chk_supp_ba;
+        old_supp_ba = supp_ba;
+
+        amrex::Print() << "Transfer ratio = 1, snug domain restarted with no refinement!\n";
+    }
+    else
+    {
+        amrex::BoxArray chk_ba_refined = amrex::refine(chk_ba, transfer_ratio);
+        chk_ba_refined.maxSize(max_grid_size);
+        amrex::BoxArray chk_supp_ba_refined = amrex::refine(chk_supp_ba, transfer_ratio);
+        chk_supp_ba_refined.maxSize(max_grid_size);
+
+        // update members
+        updateGeomBaDm(chk_ba_refined);
+        supp_ba = chk_supp_ba_refined;
+        old_supp_ba = supp_ba;
+
+        amrex::Print() << "Transfer ratio = " << transfer_ratio << ", snug domain restarted with refinement!\n";
+    }
+
     // redefine scratch variables onto new grid
     defineScratch();
 }
 
 void DomainManager::initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poisson_solver)
 {
+    BL_PROFILE("<Compute> initializeVelField()");
+
     // setting supp_ba as ba to initialize everywhere in the domain
     supp_ba = ba;
 
@@ -209,19 +252,9 @@ void DomainManager::initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poi
     }
 }
 
-void DomainManager::restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba, const int chk_refine_ratio)
+void DomainManager::refineVelField(FlowField& state, const FlowField& coarse, const int transfer_ratio, LGFOpenBC& lgf_poisson_solver)
 {
-    BL_PROFILE("<IO> restartSnugDomain()")
-    
-    // the chk file contains the boxArray that was used earlier; decide if refinement is needed and start up accordingly
-    if (chk_refine_ratio)
-
-    updateGeomBaDm(chk_ba);
-    supp_ba = chk_supp_ba;
-    old_supp_ba = supp_ba;
-
-    // redefine scratch variables onto new grid
-    defineScratch();
+    BL_PROFILE("<Compute> refineVelField()");
 }
 
 int DomainManager::computeRegridInterval(const FlowField& state) const 

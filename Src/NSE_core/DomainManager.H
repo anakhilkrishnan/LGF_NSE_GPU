@@ -24,9 +24,6 @@
 class DomainManager
 {
     private:
-
-        // the overall refinement ratio, against n_cell_base
-        int refine_ratio;
         
         // the Geometry, BoxArray and DistributionMapping that refer to Dxsoln
         // along with the box_tag_arr that only represents Dsupp
@@ -54,7 +51,7 @@ class DomainManager
         int regrid_int;
 
         amrex::IntVect n_cell, max_grid_size;
-        int n_buffer_box, n_shed_box, search_to_base_refine_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
+        int n_buffer_box, n_shed_box, search_to_fine_refine_ratio, n_lookup, n_comp, n_ghost, n_ghost_max;
         amrex::RealVect dom_lo, dom_hi;
         amrex::Real supp_tag_eps;
 
@@ -88,8 +85,9 @@ class DomainManager
         void defineScratch();
         void computeSuppBoxArr(const FlowField& state, amrex::Real time, bool shedOuterLayer = true); // tagging function
         void initializeSnugDomain(amrex::Real time);
-        void initializeVelField(FlowField& state, LGFOpenBC& lgf_poisson_solver);
-        void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba);
+        void restartSnugDomain(const amrex::BoxArray& chk_ba, const amrex::BoxArray& chk_supp_ba, const int transfer_ratio);
+        void initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poisson_solver);
+        void refineVelField(FlowField& state, const FlowField& coarse, const int transfer_ratio, LGFOpenBC& lgf_poisson_solver);        
         void checkAndUpdateSnugDomain(const FlowField& state, amrex::Real time);
         void checkAndRefreshVelocity(FlowField& state, LGFOpenBC& lgf_poisson_solver, int step);
         

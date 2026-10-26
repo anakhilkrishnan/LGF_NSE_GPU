@@ -14,7 +14,7 @@ struct SolverConfig
 
     // grid parameters
     // initial coarse search grid parameters
-    int search_to_base_refine_ratio;
+    int search_to_fine_refine_ratio;
     amrex::IntVect n_cell_search;
     amrex::IntVect max_grid_size_search;
 
@@ -47,10 +47,8 @@ struct SolverConfig
     {
         amrex::ParmParse pp;
         pp.get("refine_ratio", refine_ratio);
-        pp.getarr("n_cell", n_cell);
-        pp.get("set_dt", set_dt);
 
-        pp.get("search_to_base_refine_ratio", search_to_base_refine_ratio);
+        pp.get("search_to_fine_refine_ratio", search_to_fine_refine_ratio);
 
         pp.getarr("n_cell_base", n_cell_base);
         pp.getarr("max_grid_size", max_grid_size);
@@ -76,23 +74,28 @@ struct SolverConfig
 
         pp.get("n_lookup", n_lookup);
 
-        // alter base grid to match refinement ratio 
-        if (n_cell != (n_cell_base * refine_ratio))
-        {
-            amrex::Print() << "n_cell from inputs doesn't match requested refine ratio! Going ahead with n_cell = n_cell_base * refine_ratio, please update inputs file";
-            n_cell = n_cell_base * refine_ratio;
+        // refine_ratio related checks
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(refine_ratio >= 1, "refine_ratio < 1");
+
+        // set actual grid parameters
+        n_cell = n_cell_base * refine_ratio;
+        set_dt = set_dt_base / refine_ratio;
+        if (pp.contains("n_cell")) {
+            amrex::IntVect nc; pp.getarr("n_cell", nc);
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(nc == n_cell, "inputs: n_cell != n_cell_base * refine_ratio");
         }
-        if (set_dt != (set_dt_base / refine_ratio))
-        {
-            amrex::Print() << "set_dt from inputs doesn't match requested refine ratio! Going ahead with set_dt = set_dt_base * refine_ratio, please update inputs file";
-            set_dt = set_dt_base / refine_ratio;
+        if (pp.contains("set_dt")) {
+            amrex::Real dt_in; pp.get("set_dt", dt_in);
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(dt_in - set_dt) <= 1e-12 * set_dt,
+                "inputs: set_dt != set_dt_base / refine_ratio");
         }
         max_steps *= refine_ratio;
         
         // compute search grid parameters
-        n_cell_search = n_cell / search_to_base_refine_ratio;
-        max_grid_size_search = max_grid_size / search_to_base_refine_ratio;
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_base_refine_ratio == n_cell, "Search space refinement doesn't divide nicely!");
+        n_cell_search = n_cell / search_to_fine_refine_ratio;
+        max_grid_size_search = max_grid_size / search_to_fine_refine_ratio;
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_cell_search * search_to_fine_refine_ratio == n_cell, "Search space refinement doesn't divide n_cell nicely!");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(max_grid_size_search * search_to_fine_refine_ratio == max_grid_size, "Search space refinement doesn't divide max_grid_size nicely!");
     }
 };
 

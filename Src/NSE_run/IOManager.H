@@ -50,7 +50,7 @@ inline ChkStatus readCheckpointStatus(const std::string& chk_dir)
     return status;
 }
 
-// struct for reading and using chk metadata from grid.dat or inputs.used files
+// struct for reading and using chk metadata from grid.dat files
 struct ChkMetadata
 {
     std::string curr_dir;
@@ -60,9 +60,56 @@ struct ChkMetadata
     amrex::BoxArray ba, supp_ba;
     amrex::IntVect n_cell_base, n_cell;
     int refine_ratio = 1;
-    amrex::ReaVect prob_lo, prob_hi;
+    amrex::RealVect prob_lo, prob_hi;
     amrex::Real dt = 0.0;
     amrex::Geometry geom;
+};
+
+// free function to check chk metadata
+inline int restartTransferRatio (const ChkMetadata& chk, const SolverConfig& sol_cfg)
+{
+    amrex::Real L = 0.0;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+    {
+        L = std::max(L, sol_cfg.dom_hi[d] - sol_cfg.dom_lo[d]);
+    }
+    auto same = [L](const amrex::RealVect& a, const amrex::RealVect& b) 
+    {
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) 
+        {
+            if (std::abs(a[d] - b[d]) > 1e-12 * L)
+            {
+                return false;
+            }                    
+        }
+        return true;
+    };
+
+    // factor 1: the checkpoint is self-consistent
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(chk.n_cell == chk.n_cell_base * chk.refine_ratio,
+        "restart: grid.dat inconsistent (n_cell != n_cell_base * refine_ratio)");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(chk.geom.Domain().contains(chk.ba.minimalBox()),
+        "restart: checkpoint BoxArray lies outside its own domain");
+
+    // factor 2: it belongs to this setup
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(chk.n_cell_base == sol_cfg.n_cell_base,
+        "restart: n_cell_base differs from the checkpoint's");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(same(chk.prob_lo, sol_cfg.dom_lo) && same(chk.prob_hi, sol_cfg.dom_hi),
+        "restart: physical domain differs from the checkpoint's");
+
+    // factor 3: the requested resolution is reachable (divisibility also rejects coarsening)
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(sol_cfg.refine_ratio % chk.refine_ratio == 0,
+        "restart: refine_ratio must be an integer multiple of the checkpoint's");
+    const int r = sol_cfg.refine_ratio / chk.refine_ratio;
+
+    if (chk.dt > 0 && std::abs(chk.dt / r - sol_cfg.set_dt) > 1e-12 * sol_cfg.set_dt) 
+    {
+        amrex::Print() << "WARNING: set_dt is not the checkpoint's dt / " << r << "\n";
+    }
+    amrex::Print() << "Restart: checkpoint at refine_ratio " << chk.refine_ratio << " (n_cell " << chk.n_cell
+                   << "), inputs at " << sol_cfg.refine_ratio << " (n_cell " << sol_cfg.n_cell
+                   << ") -> transfer ratio " << r << "\n";
+    return r;
 }
 
 // which plot to write: see IOManager::writePlot
@@ -74,7 +121,7 @@ class IOManager
 
         // simulation configuration object, passed by reference
         const IOConfig& io_cfg;
-        const SovlerConfig& sol_cfg;
+        const SolverConfig& sol_cfg;
         
         // correct chkfile to use
         std::string better_dir;
@@ -86,7 +133,7 @@ class IOManager
         IOManager(const IOConfig& io_config, const SolverConfig& sol_config);
         void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
         ChkMetadata readChkMetadata();
-        void initializeFlowFieldFromChk(FlowField& init_state, DomainManager& dmgr, ProjectionWorkspace& workspace);
+        void readChkData(const ChkMetadata& chk, FlowField& chk_state);
         void writePlot(PlotKind kind, int step, amrex::Real time,
                        const FlowField& state, const DomainManager& dom_mgr);
         void writeRingDiagnostics(int step, amrex::Real time, amrex::Real dt, amrex::Real nu,
