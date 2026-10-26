@@ -250,10 +250,13 @@ void DomainManager::initializeVelField(FlowField& init_state, LGFOpenBC& lgf_poi
 }
 
 // AI CODE: Not read through
-// Refined restart: coarse velocity -> coarse vorticity -> tensor-cubic prolongation -> vor2vel.
-// Requires: restartSnugDomain(chk.ba, chk.supp_ba, r) has run (ba, dm, supp_ba and the scratch
-// MultiFabs are on the fine grid), and coarse.setBoundary() has been called, since
-// computeVorticity reads one ghost layer of velocity.
+// Refined restart: prolong the coarse face velocities (tensor cubic), take the fine discrete curl,
+// and rebuild the velocity from the vorticity inside supp_ba with vor2vel (Yu 2021, Eqs. 2.63-2.64).
+// Velocity rather than vorticity is prolonged because the curl of any face field is discretely
+// divergence-free, so vor2vel's projection removes nothing and leaves no long-range vorticity tail.
+// Requires restartSnugDomain(..., r) to have run, and coarse.setBoundary() (2 filled ghost faces).
+
+
 void DomainManager::refineVelField(FlowField& state, const FlowField& coarse, const int transfer_ratio,
                                    LGFOpenBC& lgf_poisson_solver)
 {
@@ -266,41 +269,42 @@ void DomainManager::refineVelField(FlowField& state, const FlowField& coarse, co
         "refineVelField: fine domain is not the coarse domain refined by transfer_ratio");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!supp_ba.empty(), "refineVelField: empty support");
 
-    // 1. coarse vorticity: the discrete curl of the coarse velocity, so discretely solenoidal on
-    //    the coarse lattice. Ghosts are filled across boxes and zero outside them (2 needed by the
-    //    prolongation; n_ghost >= 2 is asserted in the constructor). The outermost layer of the
-    //    coarse domain is unreliable, because setBoundary zeroes the velocity ghosts there; that
-    //    layer is a full buffer away from supp_ba, and vor2vel only takes sources inside supp_ba.
-    const amrex::Array<amrex::MultiFab, N_VORT> vort_c = computeVorticity(coarse);
-
-    // 2. prolong on refine(coarse ba) with the coarse DistributionMapping (box K over box K, so
-    //    purely local), then copy into the vort scratch, which defineScratch() put on the fine (ba, dm)
+    // 1. prolong each face-velocity component on refine(coarse ba) with the coarse
+    //    DistributionMapping (box K over box K, purely local), then copy onto the fine layout.
+    //    Coarse ghosts outside the coarse domain are zero (setBoundary), which contaminates the
+    //    outermost ~2 coarse cells of the prolonged field; that band is far outside supp_ba, and
+    //    vor2vel only takes sources inside supp_ba.
     const amrex::BoxArray& ba_c = coarse.getPres().boxArray();
     const amrex::DistributionMapping& dm_c = coarse.getPres().DistributionMap();
     const amrex::BoxArray ba_rf = amrex::refine(ba_c, r);
 
-    for (int c = 0; c < N_VORT; ++c)
+    for (int d = 0; d < AMREX_SPACEDIM; ++d)
     {
-        amrex::MultiFab tmp(amrex::convert(ba_rf, TheVortEdgeVector(c)), dm_c, 1, 0);
-        prolongCubic(vort_c[c], tmp, r);
+        const amrex::MultiFab& uc = coarse.getVel(d);
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(uc.nGrowVect().allGE(2),
+            "refineVelField: coarse velocity needs >= 2 filled ghost cells");
 
-        vort[c].setVal(0.0);
-        vort[c].ParallelCopy(tmp, 0, 0, 1, 0, 0);
-        vort[c].OverrideSync(geom.periodicity());   // shared nodal planes: one owner's value everywhere
-        vort[c].FillBoundary(geom.periodicity());   // LGFOpenBC: >= 1 filled ghost in cell-centred directions
+        amrex::MultiFab tmp(amrex::convert(ba_rf, amrex::IntVect::TheDimensionVector(d)), dm_c, uc.nComp(), 0);
+        prolongCubic(uc, tmp, r);
 
-        amrex::Print() << "refineVelField: omega_" << c << " max |coarse| " << vort_c[c].norm0()
-                       << " -> max |fine| " << vort[c].norm0() << "\n";
+        amrex::MultiFab& uf = state.getVel(d);
+        uf.setVal(0.0);
+        uf.ParallelCopy(tmp, 0, 0, uc.nComp(), 0, 0);
+        uf.OverrideSync(geom.periodicity());        // faces shared by neighbouring boxes: one owner's value
     }
+    state.setBoundary();                            // interior ghosts, for the curl stencil
 
-    // 3. velocity everywhere, ghosts included, from the LGF. u = curl psi is discretely
-    //    divergence-free whatever the prolongation did; its curl is the solenoidal projection of
-    //    the prolonged vorticity. Sources stay restricted to supp_ba, as in every refresh (unlike
-    //    initializeVelField, whose analytic vorticity is valid over the whole ba).
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) { state.getVel(d).setVal(0.0); }
+    // 2. fine vorticity as the discrete curl of the prolonged velocity: solenoidal by construction
+    vort = computeVorticity(state);
+
+    // 3. velocity everywhere, ghosts included, from the vorticity inside supp_ba. The refresh error
+    //    now compares the Biot-Savart velocity with the prolonged one, so it measures how far the
+    //    prolonged field was from consistent: worth one look in the log.
     vor2vel(state.getVelArr(), vort, lgf_poisson_solver);
+    amrex::Print() << "refineVelField: transfer refresh err";
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) { amrex::Print() << " " << vel_refresh_err[d].norm0(); }
+    amrex::Print() << "\n";
 
-    // the refresh error compares against the zeroed field above, so it means nothing here
     for (int d = 0; d < AMREX_SPACEDIM; ++d) { vel_refresh_err[d].setVal(0.0); }
 }
 
