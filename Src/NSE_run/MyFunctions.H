@@ -17,6 +17,7 @@
 #include <IOManager.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
+#include <InitialSDF.H>
 
 
 using namespace amrex;

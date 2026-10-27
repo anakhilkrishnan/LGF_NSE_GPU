@@ -8,6 +8,7 @@ namespace
 
     // names of checkpoint fields, used by both readChkData and writeChkFiles
     const char* vel_file_names[3] = {"vel_x", "vel_y", "vel_z"};
+    const char* psi_file_name = "psi";
 
     // Switches AMReX's FAB output format for the lifetime of the object, then restores it, so only
     // plotfiles are written in single precision (checkpoints use the same VisMF path and stay double).
@@ -47,7 +48,8 @@ IOManager::IOManager(const IOConfig& io_config, const SolverConfig& sol_config) 
     better_dir = "";
 }
 
-void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba)
+void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba,
+                               const InterfaceTracker* tracker)
 {
     // PENDING: Modify to write checkpoints for AMR data
 
@@ -107,6 +109,8 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
         put("prob_lo", g.ProbLo());
         put("prob_hi", g.ProbHi());
         ofs << "chk.dt = " << sol_cfg.set_dt << "\n";
+        ofs << "chk.n_interface = " << (tracker ? tracker->getNInterface() : 0) << "\n";
+        if (tracker) { ofs << "chk.psi_far = " << tracker->getPsiFar() << "\n"; }
 
         std::ofstream inp(temp_write_dir + "/inputs.used");
         amrex::ParmParse::dumpTable(inp, true);
@@ -116,6 +120,10 @@ void IOManager::writeMyChkFile(bool writeMainChk, int step, amrex::Real time, co
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         amrex::VisMF::Write(state.getVel(idim), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", vel_file_names[idim]));
+    }
+    if (tracker)
+    {
+        amrex::VisMF::Write(tracker->getPsi(), amrex::MultiFabFileFullPrefix(0, temp_write_dir, "Level_", psi_file_name));
     }
 
     // renaming and deleting older variants
@@ -195,6 +203,8 @@ ChkMetadata IOManager::readChkMetadata()
         pp.getarr("prob_lo", chk.prob_lo);
         pp.getarr("prob_hi", chk.prob_hi);
         pp.get("dt", chk.dt);
+        pp.query("n_interface", chk.n_interface);     // absent in checkpoints written before interface tracking
+        pp.query("psi_far", chk.psi_far);
         chk.version = 2;
     }
     else if (tag == "LGF_NSE_Checkpoint")
@@ -227,6 +237,23 @@ void IOManager::readChkData(const ChkMetadata& chk, FlowField& chk_state)
     amrex::Print() << "Read chk file data from: " << chk.curr_dir << "\n";
 }
 
+void IOManager::readChkInterface(const ChkMetadata& chk, InterfaceTracker& tracker)
+{
+    // psi is read onto the tracker's grid, which must be the checkpoint's (transfer ratio 1)
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(chk.n_interface == tracker.getNInterface(),
+        "restart: the checkpoint's number of interfaces (chk.n_interface in grid.dat; 0 if it has no psi)"
+        " differs from N_INTERFACE of the active case in InitialSDF.H");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(chk.psi_far - tracker.getPsiFar()) <= 1.0e-12 * tracker.getPsiFar(),
+        "restart: interface_psi_far differs from the checkpoint's (chk.psi_far in grid.dat)");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(tracker.getPsi().boxArray() == chk.ba,
+        "restart: psi can only be read onto the checkpoint's own grid (transfer ratio 1)");
+
+    amrex::VisMF::Read(tracker.getPsi(), amrex::MultiFabFileFullPrefix(0, chk.curr_dir, "Level_", psi_file_name));
+    tracker.fillPsiBoundary(tracker.getPsi());
+    tracker.checkBandInside(chk.ba, "IOManager::readChkInterface");
+    amrex::Print() << "Read interface data (" << chk.n_interface << " psi component(s)) from: " << chk.curr_dir << "\n";
+}
+
 // One plot writer; the kind selects the fields and the filename suffix.
 //   Lean       : velocity, |omega| (+ pressure if plot_pressure). Restricted to the support if
 //                plot_only_support. Production output.
@@ -239,7 +266,8 @@ void IOManager::readChkData(const ChkMetadata& chk, FlowField& chk_state)
 // The grid is always taken from the STATE, not from dom_mgr: between checkAndUpdateSnugDomain
 // and checkAndRefreshVelocity, dom_mgr already holds the new grid while the state is still on the old one.
 void IOManager::writePlot(PlotKind kind, int step, amrex::Real time,
-                          const FlowField& state, const DomainManager& dom_mgr)
+                          const FlowField& state, const DomainManager& dom_mgr,
+                          const InterfaceTracker* tracker)
 {
     BL_PROFILE("<IO> IOManager::writePlot()");
     FabFormatGuard single_precision(amrex::FABio::FAB_NATIVE_32);
@@ -262,6 +290,8 @@ void IOManager::writePlot(PlotKind kind, int step, amrex::Real time,
     // ---- cell-centred fields, assembled on the full grid ----
     amrex::Vector<std::string> varnames_cc = {AMREX_D_DECL("x_velocity", "y_velocity", "z_velocity")};
     if (with_pres) { varnames_cc.push_back("pressure"); }
+    const int n_psi = tracker ? tracker->getNInterface() : 0;
+    for (int n = 0; n < n_psi; ++n) { varnames_cc.push_back("psi_" + std::to_string(n)); }
     if (dense)
     {
         varnames_cc.push_back("divU");
@@ -286,6 +316,9 @@ void IOManager::writePlot(PlotKind kind, int step, amrex::Real time,
     c += AMREX_SPACEDIM;
 
     if (with_pres) { cc_full.ParallelCopy(state.getPres(), 0, c, 1, 0, 0); ++c; }
+
+    // psi is on the same grid as the state at every plot call (it moves in the same step)
+    if (n_psi > 0) { cc_full.ParallelCopy(tracker->getPsi(), 0, c, n_psi, 0, 0); c += n_psi; }
 
     if (dense)
     {

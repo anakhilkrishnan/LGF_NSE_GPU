@@ -11,6 +11,7 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
     n_IF = config.n_IF;
     dt = config.set_dt;
     cfl = config.cfl;
+    track_interface = config.track_interface;
 
     // copying parameters necessary for constructor only
     int n_comp = config.n_comp;
@@ -59,6 +60,24 @@ ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const a
             w[j][idim].define(bf, dm_in, n_comp, n_ghost);
             w[j][idim].setVal(0.0);
         }
+    }
+
+    if (track_interface) { defineInterfaceRegisters(ba_in, dm_in); }
+}
+
+void ProjectionWorkspace::defineInterfaceRegisters(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in)
+{
+    // one component per interface of the active case in InitialSDF.H; psi_stage is
+    // fed back to the right-hand side, which needs LS_N_GHOST ghost cells
+    psi_k.define(ba_in, dm_in, N_INTERFACE, 0);
+    psi_stage.define(ba_in, dm_in, N_INTERFACE, LS_N_GHOST);
+    psi_k.setVal(0.0);  psi_stage.setVal(0.0);
+
+    psi_rhs.resize(rk_stages + 1);                // psi_rhs[0] left undefined
+    for (int j = 1; j <= rk_stages; ++j)
+    {
+        psi_rhs[j].define(ba_in, dm_in, N_INTERFACE, 0);
+        psi_rhs[j].setVal(0.0);
     }
 }
 
@@ -436,13 +455,38 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
 
 
 // ---------------------------------------------------------------------------
+// 5b. psi^i = psi_k + dt sum_{j<=i} a~_{i,j} L^j,  L^i = L(psi^{i-1}, u^{i-1})
+// ---------------------------------------------------------------------------
+
+void ProjectionWorkspace::advanceInterfaceStage(InterfaceTracker& tracker, int i, amrex::Real t_stage)
+{
+    BL_PROFILE("<Compute> advanceInterfaceStage()");
+
+    // plain explicit RK with the shifted tableau: the velocity and time are the same
+    // u^{i-1} and u_inf(t_stage) that computeGStage feeds to N, and psi^{i-1} is psi_k
+    // itself on the first stage. The right-hand side refills psi^{i-1}'s ghost cells
+    const int nc = psi_stage.nComp();
+    amrex::MultiFab& psi_prev = (i == 1) ? tracker.getPsi() : psi_stage;
+    tracker.computeAdvectionRHS(psi_prev, psi_rhs[i], stage.getVelArr(), freestreamVelocity(t_stage));
+
+    amrex::MultiFab::Copy(psi_stage, psi_k, 0, 0, nc, 0);
+    for (int j = 1; j <= i; ++j)
+    { amrex::MultiFab::Saxpy(psi_stage, dt * aT(i,j), psi_rhs[j], 0, 0, nc, 0); }
+}
+
+
+// ---------------------------------------------------------------------------
 // 6.  advanceTimeStep -- Eqs. (25)-(31) with Eq. (35) for the stage solve
 // ---------------------------------------------------------------------------
 
 void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in,
-                                          const amrex::BoxArray& supp_ba, amrex::Real time_n)
+                                          const amrex::BoxArray& supp_ba, amrex::Real time_n,
+                                          InterfaceTracker* tracker)
 {
     BL_PROFILE("<Compute> advanceTimeStep()");
+
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE((tracker != nullptr) == track_interface,
+        "advanceTimeStep: pass the interface tracker exactly when track_interface is on");
 
     tag_ba = supp_ba;
     stage  = state_n;                                        // u^0 = u_k
@@ -454,6 +498,9 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     for (int d = 0; d < AMREX_SPACEDIM; ++d)                 // q^1 = u_k, Eq. (29)
     { amrex::MultiFab::Copy(q[d], state_n.getVel(d), 0, 0, 1, ng); }
 
+    if (tracker)                                             // psi^0 = psi_k
+    { amrex::MultiFab::Copy(psi_k, tracker->getPsi(), 0, 0, psi_k.nComp(), 0); }
+
     for (int i = 1; i <= rk_stages; ++i)
     {
         // --- g^i into slot i.  Fresh; never aged.  Eq. (28) ----------------
@@ -462,6 +509,9 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         stage.setBoundary();
         computeGStage(stage, i, t_stage);
         maskToSupport(w[i], tag_ba);     
+
+        // --- psi^i from the same u^{i-1}, t_stage.  No IF: psi does not diffuse
+        if (tracker) { advanceInterfaceStage(*tracker, i, t_stage); }
 
         // --- age q and w[1..i-1] by H^{i-1}.  Eqs. (29), (30) --------------
         if (i > 1)
@@ -543,6 +593,9 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     stage.setBoundary();
     state_n = stage;
 
+    // psi_{k+1} = psi^s, since a~_{s,j} = b_j
+    if (tracker) { amrex::MultiFab::Copy(tracker->getPsi(), psi_stage, 0, 0, psi_stage.nComp(), 0); }
+
     divU_max_norm                = divU.norm0(0, 0, false);
     divU_at_end_max_norm         = computeDivUMaxNorm(state_n);
     divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &tag_ba);
@@ -578,6 +631,9 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
     // reallocate cell-centered arrays
     divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
     divU.setVal(0.0);
+
+    // reallocate the interface registers (the tracker moves psi itself)
+    if (track_interface) { defineInterfaceRegisters(new_ba, new_dm); }
 
     // update the Poisson solver
     lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);  

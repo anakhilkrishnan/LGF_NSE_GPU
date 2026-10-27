@@ -1,4 +1,8 @@
 #include <MyFunctions.H>
+#include <InterfaceTracker.H>
+#include <FreestreamVelocity.H>
+
+#include <memory>
 
 using namespace amrex;
 
@@ -14,6 +18,22 @@ int main(int argc, char* argv[])
 
     amrex::Finalize();
     return 0;
+}
+
+// ends the per-step status line: appends the CFL number of the psi transport when
+// tracking, and warns when it nears the stability limit of the upwind scheme with
+// this three-stage tableau (about 1.4 for the linear fifth-order stencil)
+void printInterfaceCFL(const InterfaceTracker* tracker, const FlowField& state, amrex::Real time, amrex::Real dt)
+{
+    if (tracker == nullptr) { amrex::Print() << "\n"; return; }
+
+    const amrex::Real psi_cfl = tracker->computeCFL(state.getVelArr(), freestreamVelocity(time), dt);
+    amrex::Print() << " | psi_cfl: " << psi_cfl << "\n";
+    if (psi_cfl > 1.0)
+    {
+        amrex::Print() << "WARNING: psi_cfl = " << psi_cfl << " > 1, near the stability limit of the"
+                          " interface transport; reduce set_dt_base\n";
+    }
 }
 
 void extendedMain()
@@ -54,6 +74,11 @@ void extendedMain()
         chk = io.readChkMetadata();
         transfer_ratio = restartTransferRatio(chk, sol_cfg);
 
+        // psi cannot be refined yet: fail before any expensive restart work
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!sol_cfg.track_interface || transfer_ratio == 1,
+            "restart: interface tracking cannot restart at a finer resolution yet (psi refinement is not"
+            " implemented); restart at the checkpoint's refine_ratio");
+
         step_keeper = chk.step * transfer_ratio;   // steps of the current dt since t_start
         time_keeper = chk.time;
 
@@ -70,6 +95,12 @@ void extendedMain()
     FlowField state_n(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg.n_comp, sol_cfg.n_ghost);
     // create solver object
     ProjectionWorkspace workspace(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
+    // create interface tracker (optional): psi lives on the same snug domain as the flow
+    std::unique_ptr<InterfaceTracker> tracker;
+    if (sol_cfg.track_interface)
+    {
+        tracker = std::make_unique<InterfaceTracker>(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap(), sol_cfg);
+    }
 
     if (io_cfg.start_from_chk)
     {
@@ -94,6 +125,9 @@ void extendedMain()
         workspace.divU_at_end_max_norm = computeDivUMaxNorm(state_n);
         const amrex::BoxArray restart_supp_ba = dmgr.getSuppBoxArr(); // initialized to send as pointer to computeDivUMaxNorm
         workspace.divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &restart_supp_ba);
+
+        // psi from the checkpoint (transfer ratio 1 guaranteed above)
+        if (tracker) { io.readChkInterface(chk, *tracker); }
     }
     else
     {
@@ -106,6 +140,9 @@ void extendedMain()
         // populating pressure based on divergence of Navier-Stokes at initial conditions
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
+
+        // populate psi from the active case in InitialSDF.H
+        if (tracker) { tracker->initializeSDF(); }
     }
     
     io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
@@ -114,8 +151,8 @@ void extendedMain()
     if (step_keeper == 0)
     {
         BL_PROFILE("<IO> Initial Plot()");
-        if (io_cfg.write_plot) { io.writePlot(PlotKind::Lean,  step_keeper, time_keeper, state_n, dmgr); }
-        if (io_cfg.plot_dense) { io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr); }
+        if (io_cfg.write_plot) { io.writePlot(PlotKind::Lean,  step_keeper, time_keeper, state_n, dmgr, tracker.get()); }
+        if (io_cfg.plot_dense) { io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr, tracker.get()); }
     }
 
     // switch for main and alt chk files
@@ -128,7 +165,8 @@ void extendedMain()
     amrex::Print() << "Step: " << step_keeper << " | Time: " << time_keeper << " | dt: " << dt_master 
                     << " | WallTime: " << (init_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                     << " | divU_max: " << workspace.divU_at_end_max_norm
-                    << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
+                    << " | divU_max_support: " << workspace.divU_at_end_max_norm_support;
+    printInterfaceCFL(tracker.get(), state_n, time_keeper, dt_master);
 
     // check if max_steps is to be used or not
     const bool use_max_steps = (sol_cfg.max_steps >= 0);
@@ -145,7 +183,7 @@ void extendedMain()
         auto step_start_time = amrex::second();
 
         // IF-HERK integrator
-        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr(), time_keeper);   // time at start of step
+        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr(), time_keeper, tracker.get());   // time at start of step
 
         // update counters
         time_keeper += dt_master;
@@ -159,16 +197,17 @@ void extendedMain()
 
         // regrid pair: only on steps where the grid changes (the flag is known only from here on)
         const bool regrid_plots = io_cfg.plot_regrid && dmgr.did_snug_domain_change;
-        if (regrid_plots) { io.writePlot(PlotKind::RegridPre, step_keeper, time_keeper, state_n, dmgr); }
+        if (regrid_plots) { io.writePlot(PlotKind::RegridPre, step_keeper, time_keeper, state_n, dmgr, tracker.get()); }
 
         if (dmgr.did_snug_domain_change)
         {
             workspace.regridOnto(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap());
+            if (tracker) { tracker->regrid(dmgr.getGeom(), dmgr.getBoxArr(), dmgr.getDistMap()); }
         }
 
         dmgr.checkAndRefreshVelocity(state_n, workspace.lgf_poisson_solver, step_keeper);
 
-        if (regrid_plots) { io.writePlot(PlotKind::RegridPost, step_keeper, time_keeper, state_n, dmgr); }
+        if (regrid_plots) { io.writePlot(PlotKind::RegridPost, step_keeper, time_keeper, state_n, dmgr, tracker.get()); }
 
         // solver time and output
         amrex::Gpu::streamSynchronize();
@@ -181,11 +220,11 @@ void extendedMain()
         //  plot in specified intervals
         if (io_cfg.write_plot && step_keeper % io_cfg.plot_int == 0)
         {
-            io.writePlot(PlotKind::Lean, step_keeper, time_keeper, state_n, dmgr);
+            io.writePlot(PlotKind::Lean, step_keeper, time_keeper, state_n, dmgr, tracker.get());
         }
         if (io_cfg.plot_dense && step_keeper % io_cfg.plot_dense_int == 0)
         {
-            io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr);
+            io.writePlot(PlotKind::Dense, step_keeper, time_keeper, state_n, dmgr, tracker.get());
         }
 
         // refresh flag after all dependent processes are complete
@@ -199,7 +238,7 @@ void extendedMain()
         if ((step_keeper %io_cfg.chk_int == 0 || (step_keeper - 5) %io_cfg.chk_int == 0) && io_cfg.write_chk)
         {
             BL_PROFILE("<IO> Interval Checkpoint()");
-            io.writeMyChkFile(writeMainChk, step_keeper, time_keeper, state_n, dmgr.getSuppBoxArr());
+            io.writeMyChkFile(writeMainChk, step_keeper, time_keeper, state_n, dmgr.getSuppBoxArr(), tracker.get());
             writeMainChk = !writeMainChk;
         }
 
@@ -212,7 +251,8 @@ void extendedMain()
         amrex::Print() << "Step: " << step_keeper << " | Time: " << time_keeper << " | dt: " << dt_master 
                         << " | WallTime: " << (step_duration) << "s | divU_star_max: " << workspace.divU_max_norm 
                         << " | divU_max: " << workspace.divU_at_end_max_norm
-                        << " | divU_max_support: " << workspace.divU_at_end_max_norm_support << "\n";
+                        << " | divU_max_support: " << workspace.divU_at_end_max_norm_support;
+        printInterfaceCFL(tracker.get(), state_n, time_keeper, dt_master);
     }
 
     // overall code walltime tracking

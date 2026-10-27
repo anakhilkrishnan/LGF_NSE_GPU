@@ -21,6 +21,7 @@
 #include <FreestreamVelocity.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
+#include <InterfaceTracker.H>
 
 
 // free function for averaging cell to node
@@ -63,6 +64,8 @@ struct ChkMetadata
     amrex::RealVect prob_lo, prob_hi;
     amrex::Real dt = 0.0;
     amrex::Geometry geom;
+    int n_interface = 0;            // 0: the checkpoint carries no psi
+    amrex::Real psi_far = 0.0;
 };
 
 // free function to check chk metadata
@@ -131,11 +134,14 @@ class IOManager
     public:
 
         IOManager(const IOConfig& io_config, const SolverConfig& sol_config);
-        void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba);
+        void writeMyChkFile(bool writeMainChk, int step, amrex::Real time, const FlowField& state, const amrex::BoxArray& supp_ba,
+                            const InterfaceTracker* tracker);       // nullptr: no psi written
         ChkMetadata readChkMetadata();
         void readChkData(const ChkMetadata& chk, FlowField& chk_state);
+        void readChkInterface(const ChkMetadata& chk, InterfaceTracker& tracker);
         void writePlot(PlotKind kind, int step, amrex::Real time,
-                       const FlowField& state, const DomainManager& dom_mgr);
+                       const FlowField& state, const DomainManager& dom_mgr,
+                       const InterfaceTracker* tracker);            // nullptr: no psi plotted
         void writeRingDiagnostics(int step, amrex::Real time, amrex::Real dt, amrex::Real nu,
                                 const FlowField& state, const DomainManager& dom_mgr);
 };

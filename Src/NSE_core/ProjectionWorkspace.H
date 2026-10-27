@@ -15,6 +15,7 @@
 #include <SpatialDiscretization.H>
 #include <RKCoefficients.H>
 #include <LGFOpenBC.H>
+#include <InterfaceTracker.H>
 
 using namespace amrex;
 
@@ -61,6 +62,17 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> IF_buff;   // sweep scratch
         amrex::Vector<amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>> w;
 
+        // interface transport registers, defined only when tracking. psi has no viscous term,
+        // so no integrating factor: psi_k = psi(t_k), psi_stage = psi^i, and psi_rhs[j] = L^j,
+        // 1-based like w (psi_rhs[0] unused)
+        bool track_interface;
+        amrex::MultiFab psi_k;
+        amrex::MultiFab psi_stage;
+        amrex::Vector<amrex::MultiFab> psi_rhs;
+
+        void defineInterfaceRegisters(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in);
+        void advanceInterfaceStage(InterfaceTracker& tracker, int i, amrex::Real t_stage);
+
         void setupRKCoeffs(const RKButcher& rkbt);
         void precomputeIFs(const amrex::Geometry& geom);
 
@@ -88,7 +100,8 @@ class ProjectionWorkspace
         void applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, int if_idx);
         void computeGStage(const FlowField& st, int i, amrex::Real t_stage);  // N(u^{i-1} + u_inf(t_stage))   // g^i -> w[i]
         void maskToSupport(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, const amrex::BoxArray& supp);
-        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba, amrex::Real time_n);
+        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba, amrex::Real time_n,
+                             InterfaceTracker* tracker);    // nullptr when track_interface is off
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 

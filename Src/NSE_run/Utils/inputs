@@ -36,6 +36,11 @@ int_fact_threshold = 1.0e-10
 
 n_lookup = 16
 
+# interface parameters
+track_interface = true
+interface_scheme = WENO5
+interface_psi_far = 0.4
+
 write_plot = true
 plot_int = 800
 plot_pressure = true

@@ -3,6 +3,9 @@ add_library(NSE_core_lib STATIC
                 domainManager.cpp
                 flowField.cpp
                 projectionWorkspace.cpp
+                interfaceTracker.cpp
+                InterfaceDiscretization.H
+                InterfaceTracker.H
                 Prolongation.H
                 DomainManager.H
                 FlowField.H

@@ -43,6 +43,11 @@ struct SolverConfig
     // LGF kernel parameters
     int n_lookup;
 
+    // interface tracking; the interfaces themselves are the active case in InitialSDF.H
+    bool track_interface = false;
+    std::string interface_scheme = "WENO5";   // WENO5 or HOUC5
+    amrex::Real interface_psi_far = 0.0;      // clip magnitude of psi (physical units)
+
     void readInputs()
     {
         amrex::ParmParse pp;
@@ -74,6 +79,15 @@ struct SolverConfig
 
         pp.get("n_lookup", n_lookup);
 
+        pp.query("track_interface", track_interface);
+        if (track_interface)
+        {
+            pp.query("interface_scheme", interface_scheme);
+            pp.get("interface_psi_far", interface_psi_far);
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(interface_scheme == "WENO5" || interface_scheme == "HOUC5",
+                "inputs: interface_scheme must be WENO5 or HOUC5");
+        }
+
         // refine_ratio related checks
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(refine_ratio >= 1, "refine_ratio < 1");
 
@@ -102,6 +116,10 @@ struct SolverConfig
                << " | n_cell " << n_cell << " (base " << n_cell_base << ")"
                << " | n_cell_search " << n_cell_search
                << " | dt " << set_dt << " (base " << set_dt_base << ")\n";
+        if (track_interface)
+        {
+            amrex::Print() << "Interface tracking: " << interface_scheme << " | psi_far " << interface_psi_far << "\n";
+        }
     }
 };
 
