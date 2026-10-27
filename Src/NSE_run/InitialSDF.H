@@ -136,6 +136,17 @@ amrex::Real ringAndSphereSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z
     return sphereSDF(x, y, z, s);
 }
 
+// The cores of the three rings of threeRingTriangleVorticity, one interface per ring (n = ring k).
+// The geometry comes from threeRingTriangleRing(), so the tori always sit on the actual cores. The
+// tube reaches one core radius (|omega| = e^-1 of its peak there), which keeps the three tubes
+// apart: facing cores are side - 2R = 0.5 apart, the tubes 0.1.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real threeRingTriangleCoreSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+{
+    constexpr amrex::Real n_delta = 1.0;    // tube radius in core radii
+    return torusSDF(x, y, z, ringCoreTorus(threeRingTriangleRing(n), n_delta));
+}
+
 // ---------------------------------------------------------------------------
 // Initial signed distance psi_0(x, y, z). Every case follows the same contract:
 //   n       : interface index, 0 <= n < N_INTERFACE (one psi component each)
@@ -147,15 +158,16 @@ amrex::Real ringAndSphereSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z
 // ---------------------------------------------------------------------------
 
 // Number of interfaces the active case defines. Must match the case below.
-inline constexpr int N_INTERFACE = 1;
+inline constexpr int N_INTERFACE = 3;
 
 // The active case. The pipeline only ever calls this function.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real initialSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
-    // return singleSphereSDF(n, x, y, z);
-    // return ringAndSphereSDF(n, x, y, z);        // N_INTERFACE = 2
-    return vortexRingCoreSDF(n, x, y, z);
+    // return singleSphereSDF(n, x, y, z);          // N_INTERFACE = 1
+    // return vortexRingCoreSDF(n, x, y, z);        // N_INTERFACE = 1
+    // return ringAndSphereSDF(n, x, y, z);         // N_INTERFACE = 2
+    return threeRingTriangleCoreSDF(n, x, y, z);    // N_INTERFACE = 3
 }
 
 #endif

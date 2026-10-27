@@ -193,8 +193,9 @@ amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex
 // configuration is symmetric under 120-degree rotations about z. With tilt = 0 all three rings travel
 // in +z; tilt > 0 inclines each ring's direction of travel toward the centroid (tilt < 0: away from it).
 // The gap between facing cores (centre to centre, in the plane of the triangle) is side - 2R.
+// threeRingTriangleRing(k) is the single source of the geometry: InitialSDF.H marks the same cores.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::Real threeRingTriangleVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+GaussianRing threeRingTriangleRing (int k) noexcept
 {
     constexpr amrex::Real R        = 1.0;   // ring radius
     constexpr amrex::Real delta    = 0.2;   // core radius
@@ -210,17 +211,20 @@ amrex::Real threeRingTriangleVorticity (int comp, amrex::Real x, amrex::Real y, 
     const amrex::Real uy[3] = {1.0, -0.5, -0.5};                // (90, 210, 330 degrees)
     const amrex::Real st = std::sin(tilt), ct = std::cos(tilt);
 
+    GaussianRing ring;
+    ring.R = R; ring.delta = delta; ring.Gamma = Gamma;
+    ring.center[0] = rho * ux[k]; ring.center[1] = rho * uy[k]; ring.center[2] = z0;
+    ring.dir[0]    = -st * ux[k]; ring.dir[1]    = -st * uy[k]; ring.dir[2]    = ct;
+    ring.varsigma  = varsigma;
+    ring.seed      = 2008u + static_cast<unsigned int>(k);
+    return ring;
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real threeRingTriangleVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+{
     amrex::Real w = 0.0;
-    for (int k = 0; k < 3; ++k)
-    {
-        GaussianRing ring;
-        ring.R = R; ring.delta = delta; ring.Gamma = Gamma;
-        ring.center[0] = rho * ux[k]; ring.center[1] = rho * uy[k]; ring.center[2] = z0;
-        ring.dir[0]    = -st * ux[k]; ring.dir[1]    = -st * uy[k]; ring.dir[2]    = ct;
-        ring.varsigma  = varsigma;
-        ring.seed      = 2008u + static_cast<unsigned int>(k);
-        w += ringVorticity(comp, x, y, z, ring);
-    }
+    for (int k = 0; k < 3; ++k) { w += ringVorticity(comp, x, y, z, threeRingTriangleRing(k)); }
     return w;
 }
 
