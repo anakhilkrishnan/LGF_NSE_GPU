@@ -17,6 +17,8 @@
 #include <IOManager.H>
 #include <FlowField.H>
 #include <ProjectionWorkspace.H>
+#include <InterfaceTracker.H>
+#include <FreestreamVelocity.H>
 #include <InitialSDF.H>
 
 

@@ -1,6 +1,4 @@
 #include <MyFunctions.H>
-#include <InterfaceTracker.H>
-#include <FreestreamVelocity.H>
 
 #include <memory>
 
