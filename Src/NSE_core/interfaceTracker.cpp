@@ -164,14 +164,38 @@ void InterfaceTracker::checkBandInside(const amrex::BoxArray& next_ba, const std
 
 void InterfaceTracker::fillPsiBoundary(amrex::MultiFab& psi_in) const
 {
+    // no flow information (initialization, regrid, restart): extrapolate every
+    // outside ghost. The next right-hand side refills them with the flow
+    fillPsiBoundaryImpl(psi_in, nullptr, amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>{});
+}
+
+void InterfaceTracker::fillPsiBoundary(amrex::MultiFab& psi_in, const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                                       amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const
+{
+    fillPsiBoundaryImpl(psi_in, &vel, uinf);
+}
+
+void InterfaceTracker::fillPsiBoundaryImpl(amrex::MultiFab& psi_in, const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>* vel,
+                                           amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const
+{
     BL_PROFILE("<Compute> InterfaceTracker::fillPsiBoundary()");
 
     // psi is not compact, so the flow solver's "zero outside the snug domain"
-    // convention cannot be used (zero is the interface itself)
+    // convention cannot be used (zero is the interface itself). Ghost cells
+    // outside the snug domain follow the characteristics, as the legacy tube
+    // edge does with first-order upwinding:
+    //   inflow  (flow enters through the box face the ghost lies beyond): the
+    //           far-field value -psi_far, the only correct data from outside;
+    //   outflow (or no velocity given): linear extrapolation from the nearest
+    //           valid cell, psi_c + s (psi_c - psi_{c-1}) for the ghost s cells out.
+    // Extrapolating at an inflow face would re-impose the interior slope every
+    // step, so a disturbance there would grow instead of being washed out
 
-    // 1. every ghost cell gets a linear extrapolation from its own box; those
-    //    outside the snug domain keep it. Reads valid cells only, writes ghosts
-    //    only, so there is no race between the two
+    const bool has_vel = (vel != nullptr);
+    const amrex::Real far = psi_far;
+
+    // 1. every ghost cell is filled from its own box. Reads valid cells and
+    //    boundary faces only, writes ghosts only, so there is no race
     for (amrex::MFIter mfi(psi_in, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box gbx = mfi.growntilebox();
@@ -181,6 +205,11 @@ void InterfaceTracker::fillPsiBoundary(amrex::MultiFab& psi_in) const
 
         auto const& p = psi_in.array(mfi);
         auto const& pc = psi_in.const_array(mfi);
+        amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> u;
+        if (has_vel)
+        {
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) { u[d] = (*vel)[d].const_array(mfi); }
+        }
 
         amrex::ParallelFor(gbx, psi_in.nComp(), [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
         {
@@ -191,10 +220,16 @@ void InterfaceTracker::fillPsiBoundary(amrex::MultiFab& psi_in) const
             const int jc = amrex::Clamp(j, lo.y, hi.y);
             const int kc = amrex::Clamp(k, lo.z, hi.z);
 
-            p(i, j, k, n) = pc(ic, jc, kc, n)
-                AMREX_D_TERM(+ ghostIncrement<0>(pc, ic, jc, kc, n, i - ic, hi.x > lo.x),
-                             + ghostIncrement<1>(pc, ic, jc, kc, n, j - jc, hi.y > lo.y),
-                             + ghostIncrement<2>(pc, ic, jc, kc, n, k - kc, hi.z > lo.z));
+            // inflow through any face the ghost lies beyond (edges and corners: either face)
+            const bool inflow = has_vel && (AMREX_D_TERM(ghostInflow<0>(u[0], ic, jc, kc, i - ic, uinf[0]),
+                                                      || ghostInflow<1>(u[1], ic, jc, kc, j - jc, uinf[1]),
+                                                      || ghostInflow<2>(u[2], ic, jc, kc, k - kc, uinf[2])));
+
+            p(i, j, k, n) = inflow ? -far
+                          : pc(ic, jc, kc, n)
+                            AMREX_D_TERM(+ ghostIncrement<0>(pc, ic, jc, kc, n, i - ic, hi.x > lo.x),
+                                         + ghostIncrement<1>(pc, ic, jc, kc, n, j - jc, hi.y > lo.y),
+                                         + ghostIncrement<2>(pc, ic, jc, kc, n, k - kc, hi.z > lo.z));
         });
     }
 
@@ -238,7 +273,8 @@ void InterfaceTracker::computeAdvectionRHS(amrex::MultiFab& psi_in, amrex::Multi
     // rhs = -(u + u_inf) . grad(psi) on the valid cells of psi_in's grid. vel holds
     // the face perturbation velocity of the IF-HERK stage (the same one passed
     // to the nonlinear term) and uinf the freestream at that stage's time.
-    // psi_in may be psi itself or a stage copy; its ghost cells are refilled here
+    // psi_in may be psi itself or a stage copy; its ghost cells are refilled here,
+    // with inflow faces of the snug domain taking the far-field value
 
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(psi_in.nGrow() >= LS_N_GHOST,
         "InterfaceTracker::computeAdvectionRHS: psi needs LS_N_GHOST ghost cells");
@@ -254,7 +290,7 @@ void InterfaceTracker::computeAdvectionRHS(amrex::MultiFab& psi_in, amrex::Multi
     }
 #endif
 
-    fillPsiBoundary(psi_in);
+    fillPsiBoundary(psi_in, vel, uinf);
 
     switch (scheme)
     {

@@ -49,6 +49,21 @@ inline AdvectionScheme advectionSchemeFromName(const std::string& name)
     return AdvectionScheme::WENO5;
 }
 
+// true when the flow enters the box through its dim-face on the side of a ghost cell lying
+// `steps` cells beyond the nearest valid cell (ic,jc,kc); steps = 0 means the ghost is not
+// outside in this direction. The face is the box's own boundary face, so no velocity ghost
+// cells are needed: the high face of cell ic is face ic + 1, its low face is face ic
+template <int dim>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+bool ghostInflow(amrex::Array4<amrex::Real const> const& u_face, int ic, int jc, int kc, int steps, amrex::Real uinf)
+{
+    if (steps == 0) { return false; }
+    const int shift = (steps > 0) ? 1 : 0;
+    const amrex::Real un = u_face(ic + (dim == 0 ? shift : 0), jc + (dim == 1 ? shift : 0),
+                                  kc + (dim == 2 ? shift : 0)) + uinf;
+    return (steps > 0) ? (un < 0.0) : (un > 0.0);
+}
+
 class InterfaceTracker
 {
     private:
@@ -66,12 +81,6 @@ class InterfaceTracker
         int n_interface;
         AdvectionScheme scheme;
         amrex::Real psi_far;    // clip magnitude of psi: the far-field value, and the value of cells new to the domain
-
-        // supporting functions
-        template <AdvectionScheme scheme_t>
-        void computeAdvectionRHSImpl(const amrex::MultiFab& psi_in, amrex::MultiFab& rhs,
-                                     const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
-                                     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const;
 
     public:
 
@@ -97,8 +106,16 @@ class InterfaceTracker
                                amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf, amrex::Real dt) const;
 
         // supporting functions
+        template <AdvectionScheme scheme_t>
+        void computeAdvectionRHSImpl(const amrex::MultiFab& psi_in, amrex::MultiFab& rhs,
+                                     const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                                     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const;
+        void fillPsiBoundaryImpl(amrex::MultiFab& psi_in, const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>* vel,
+                                 amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const;
         void defineLikePsi(amrex::MultiFab& mf, int n_grow) const;
         void fillPsiBoundary(amrex::MultiFab& psi_in) const;
+        void fillPsiBoundary(amrex::MultiFab& psi_in, const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                             amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const;
         void checkBandInside(const amrex::BoxArray& next_ba, const std::string& caller) const;
 };
 

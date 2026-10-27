@@ -30,8 +30,9 @@ The time integration is in `ProjectionWorkspace` class, `main.cpp` handles initi
 2. Each field is stored as a component of the same `amrex::MultiFab` object, with 3 ghost cells.
 3. $\psi > 0$ for inside the shape, $\psi = 0$ for interface, and $\psi < 0$ for outside.
 4. $\psi$ is clipped between limits ($\pm \psi_{\infty}$) at initialization.
-5. The $\psi$ band ($|\psi| < \psi_\infty$) is required to stay inside the snug domain; the run aborts at initialization, restart or regrid otherwise. It should also stay inside the flow’s support region, since velocity in the buffer is inaccurate, but this is not checked. Ghost cells that overlap a neighbouring box take its values; ghost cells outside the snug domain are filled by linear extrapolation from the nearest valid cell of the same box.
-6. Each field is plotted for post processing.
+5. The $\psi$ band ($|\psi| < \psi_\infty$) is required to stay inside the snug domain; the run aborts at initialization, restart or regrid otherwise. It should also stay inside the flow’s support region, since velocity in the buffer is inaccurate, but this is not checked. Ghost cells that overlap a neighbouring box take its values.
+6. Boundary ghost cells are treated based on the flow. An inflow condition in the last valid cell fills the ghost cells with $-\psi_\infty$. An outflow condition extrapolates linearly and evaluates. This allows for WENO5 to be implemented throughout the domain, buffer included.
+7. Each field is plotted for post processing.
 
 ### Advection scheme
 
@@ -41,6 +42,7 @@ The time integration is in `ProjectionWorkspace` class, `main.cpp` handles initi
 4. HOUC5 is computed identically to WENO5 with the optimal weights (0.1, 0.6, 0.3) without any smoothness indicators.
 5. At each stage, velocity ($\vec{u}$) obtained (as a sum of velocity perturbation from the projection method and freestream) from IF-HERK integration is used to advect $\psi$ using the same Butcher Tableau as the HERK, without the action of the integrating factor.
 6. On every snug-domain update, the regrid routine copies $\psi$ wherever the old and new grids overlap and assigns $-\psi_\infty$ to new cells. Beforehand it checks that removed cells, and cells on the edge of the old domain, all have $\psi \leq -\psi_\infty + 3\Delta x $ (the stencil reach), and aborts otherwise.
+7. (Yet to be implemented) Per-step clipping of the $\psi$ field.
 
 ### Reinitialization
 
