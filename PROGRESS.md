@@ -34,6 +34,7 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 19. Consider switching IO_int type variables to physical time instead of step count.
 20. Fix the GPU job script for PARAM Rudra (check ThreeVortexRings Claude thread).
 21. Make the CPU version OpenMP compatible (idea is to have 2 ranks per node, 1 per socket, similar to GPU setup).
+22. Split the monolithic writeDiagnostics file into more meaningful quanities which are generalizable and meaningful on one side, and problem specific on the other.
 
 ## Yet to decide
 
