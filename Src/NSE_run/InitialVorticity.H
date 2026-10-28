@@ -190,19 +190,22 @@ amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex
 
 // Three identical Gaussian-core rings centred on the vertices of an equilateral triangle.
 // The triangle lies in the plane z = z0 with its centroid on the z axis and one vertex on +y, so the
-// configuration is symmetric under 120-degree rotations about z. With tilt = 0 all three rings travel
-// in +z; tilt > 0 inclines each ring's direction of travel toward the centroid (tilt < 0: away from it).
-// The gap between facing cores (centre to centre, in the plane of the triangle) is side - 2R.
+// configuration is symmetric under 120-degree rotations about z. With tilt = 0 all three rings lie in
+// the plane of the triangle and travel in +z; tilt > 0 inclines each ring's direction of travel toward
+// the centroid (tilt < 0: away from it). At tilt = pi/2 the axes lie in the plane of the triangle and
+// point at the centroid, the rings stand perpendicular to it, and the three collide at the centre.
+// Closest approach of neighbouring cores (centre to centre): side - 2R at tilt = 0, side - R at
+// tilt = pi/2.
 // threeRingTriangleRing(k) is the single source of the geometry: InitialSDF.H marks the same cores.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 GaussianRing threeRingTriangleRing (int k) noexcept
 {
     constexpr amrex::Real R        = 1.0;   // ring radius
-    constexpr amrex::Real delta    = 0.2;   // core radius
+    constexpr amrex::Real delta    = 0.25;  // core radius
     constexpr amrex::Real Gamma    = 1.0;   // circulation of each ring
-    constexpr amrex::Real side     = 2.5;   // triangle side = centre-to-centre distance  ** PLACEHOLDER **
+    constexpr amrex::Real side     = 1.88;  // triangle side = centre-to-centre distance
     constexpr amrex::Real z0       = 0.0;   // plane of the triangle
-    constexpr amrex::Real tilt     = 0.0;   // inclination of each ring's travel toward the centroid [rad]
+    constexpr amrex::Real tilt     = 1.5707963267948966;   // pi/2 towards the centroid [rad]
     constexpr amrex::Real varsigma = 0.0;   // per-ring centreline perturbation (0 = none); seeds differ per ring
 
     constexpr amrex::Real rho = side * 0.57735026918962576;     // circumradius, side / sqrt(3)

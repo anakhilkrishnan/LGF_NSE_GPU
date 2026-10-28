@@ -137,9 +137,10 @@ amrex::Real ringAndSphereSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z
 }
 
 // The cores of the three rings of threeRingTriangleVorticity, one interface per ring (n = ring k).
-// The geometry comes from threeRingTriangleRing(), so the tori always sit on the actual cores. The
-// tube reaches one core radius (|omega| = e^-1 of its peak there), which keeps the three tubes
-// apart: facing cores are side - 2R = 0.5 apart, the tubes 0.1.
+// The geometry comes from threeRingTriangleRing(), so the tori always sit on the actual cores,
+// whatever the tilt. The tube reaches one core radius (|omega| = e^-1 of its peak there); with the
+// rings standing (tilt = pi/2) neighbouring cores are side - R = 0.88 apart, so with delta = 0.25 the
+// tubes start 0.38 apart.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real threeRingTriangleCoreSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
