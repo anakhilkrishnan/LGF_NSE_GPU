@@ -12,10 +12,10 @@
 namespace freestream_params
 {
     // general case, no freestream velocity
-    // constexpr amrex::Real U[3] = {0.0, 0.0, 0.0};
+    constexpr amrex::Real U[3] = {0.0, 0.0, 0.0};
 
     // Liska & Colonius (2016), Sec. 6.4: constant u_inf = (0, 0, -0.18686) Gamma0/R0
-    constexpr amrex::Real Ux = 0.0, Uy = 0.0, Uz = -0.18686;
+    // constexpr amrex::Real Ux = 0.0, Uy = 0.0, Uz = -0.18686;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
