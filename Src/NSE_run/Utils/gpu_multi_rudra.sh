@@ -1,14 +1,16 @@
 #!/bin/bash
 
-#SBATCH --job-name=LGF_NSE_GPU_test
-#SBATCH --partition=gpu-debug
-#SBATCH --nodes=1
+#SBATCH --job-name=GPU_testrun
+#SBATCH --partition=gpu-small
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=24
+#SBATCH --mem=160G
 #SBATCH --gres=gpu:2
-#SBATCH --time=00:30:00
+#SBATCH --time=02:00:00
 #SBATCH --error=job.%J.err
 #SBATCH --output=job.%J.out
+#SBATCH --exclude=cbgpu0172
 
 source ~/.bashrc
 set -o pipefail
@@ -33,6 +35,6 @@ if ldd $EXEC | grep -q "not found"; then
     echo "UNRESOLVED:"; ldd $EXEC | grep "not found"; exit 1
 fi
 
-mpiexec -n $SLURM_NTASKS --map-by socket --bind-to socket --report-bindings $EXEC $INPUTS_FILE $AMREX_ARGS | tee ./Logs/log_run.txt
+mpiexec -n $SLURM_NTASKS --map-by socket --bind-to socket $EXEC $INPUTS_FILE $AMREX_ARGS | tee ./Logs/log_GPU_testrun.txt
 
 
