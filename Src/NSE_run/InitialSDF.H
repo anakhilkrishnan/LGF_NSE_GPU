@@ -68,6 +68,18 @@ TorusSDF ringCoreTorus (const GaussianRing& ring, amrex::Real n_delta) noexcept
     return t;
 }
 
+// Signed distance to a Gaussian-core ring's core: the torus of ringCoreTorus() on the ring's centreline, which follows
+// the ring's perturbation (ringRadialDisplacement, zero for an unperturbed ring). Exact distance for an unperturbed
+// ring; with a perturbation |grad psi| = 1 + O(slope^2) of the displaced centreline, which reinitialization will remove.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ringCoreSDF (const GaussianRing& ring, amrex::Real n_delta,
+                         amrex::Real x, amrex::Real y, amrex::Real z) noexcept
+{
+    TorusSDF t = ringCoreTorus(ring, n_delta);
+    t.R += ringRadialDisplacement(x, y, z, ring);
+    return torusSDF(x, y, z, t);
+}
+
 // ---------------------------------------------------------------------------
 // Combining shapes (psi > 0 inside). The sign and the zero contour are always exact; the
 // distance is exact on one side and a bound on the other (union: exact outside; intersection
@@ -118,7 +130,7 @@ amrex::Real vortexRingCoreSDF (int n, amrex::Real x, amrex::Real y, amrex::Real 
 {
     amrex::ignore_unused(n);
     GaussianRing ring;
-    return torusSDF(x, y, z, ringCoreTorus(ring, 2.0));
+    return ringCoreSDF(ring, 2.0, x, y, z);
 }
 
 // Two interfaces: the default ring's core (n = 0), and a sphere of fluid sitting on its axis
@@ -129,7 +141,7 @@ amrex::Real ringAndSphereSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z
     if (n == 0)
     {
         GaussianRing ring;
-        return torusSDF(x, y, z, ringCoreTorus(ring, 2.0));
+        return ringCoreSDF(ring, 2.0, x, y, z);
     }
     SphereSDF s;
     s.radius = 0.4; s.center[2] = 1.5;
@@ -138,14 +150,14 @@ amrex::Real ringAndSphereSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z
 
 // The cores of the three rings of threeRingTriangleVorticity, one interface per ring (n = ring k).
 // The geometry comes from threeRingTriangleRing(), so the tori always sit on the actual cores,
-// whatever the tilt. The tube reaches one core radius (|omega| = e^-1 of its peak there); with the
-// rings standing (tilt = pi/2) neighbouring cores are side - R = 0.88 apart, so with delta = 0.25 the
-// tubes start 0.38 apart.
+// whatever the tilt, and follow each ring's centreline perturbation. The tube reaches one core radius
+// (|omega| = e^-1 of its peak there); with the rings standing (tilt = pi/2) neighbouring cores are
+// side - R apart (0.88 for side 1.88), so with delta = 0.25 the tubes start 0.38 apart.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real threeRingTriangleCoreSDF (int n, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
     constexpr amrex::Real n_delta = 1.0;    // tube radius in core radii
-    return torusSDF(x, y, z, ringCoreTorus(threeRingTriangleRing(n), n_delta));
+    return ringCoreSDF(threeRingTriangleRing(n), n_delta, x, y, z);
 }
 
 // ---------------------------------------------------------------------------

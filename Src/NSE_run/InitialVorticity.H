@@ -44,9 +44,16 @@ struct GaussianRing
     unsigned int seed     = 2008u;
 };
 
+// Local frame of a ring: (e1, e2) span the plane of the ring, d is the (unit) direction of travel.
+struct RingFrame
+{
+    amrex::Real e1[3];
+    amrex::Real e2[3];
+    amrex::Real d[3];
+};
+
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::Real ringVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z,
-                           const GaussianRing& ring) noexcept
+RingFrame ringFrame (const GaussianRing& ring) noexcept
 {
     // unit direction of travel
     amrex::Real d0 = ring.dir[0], d1 = ring.dir[1], d2 = ring.dir[2];
@@ -59,14 +66,47 @@ amrex::Real ringVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z
     const amrex::Real sg = (d2 >= 0.0) ? amrex::Real(1.0) : amrex::Real(-1.0);
     const amrex::Real a  = amrex::Real(-1.0) / (sg + d2);
     const amrex::Real b  = d0 * d1 * a;
-    const amrex::Real e1[3] = {amrex::Real(1.0) + sg * d0 * d0 * a, sg * b, -sg * d0};
-    const amrex::Real e2[3] = {b, sg + d1 * d1 * a, -d1};
+
+    RingFrame fr;
+    fr.e1[0] = amrex::Real(1.0) + sg * d0 * d0 * a; fr.e1[1] = sg * b;                  fr.e1[2] = -sg * d0;
+    fr.e2[0] = b;                                   fr.e2[1] = sg + d1 * d1 * a;        fr.e2[2] = -d1;
+    fr.d[0]  = d0;                                  fr.d[1]  = d1;                      fr.d[2]  = d2;
+    return fr;
+}
+
+// The centreline perturbation of a ring: f(theta) = sum_{n=1}^{nmodes} [A_n sin(n theta) + B_n cos(n theta)] and
+// fp = df/dtheta, at the azimuth (c1, s1) = (cos theta, sin theta) of the ring frame; (A_n, B_n) = (cos phi_n, sin phi_n)
+// with phi_n random from `seed`. The perturbation is a radial displacement of the centreline in the plane of the
+// ring, r = R + varsigma R f(theta).
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+void ringModeSum (const GaussianRing& ring, amrex::Real c1, amrex::Real s1, amrex::Real& f, amrex::Real& fp) noexcept
+{
+    constexpr amrex::Real twopi = 6.283185307179586;
+    amrex::Real cn = 1.0, sn = 0.0;
+    f = 0.0; fp = 0.0;
+    for (int n = 1; n <= ring.nmodes; ++n)
+    {
+        const amrex::Real cnew = cn*c1 - sn*s1;                 // cos(n theta), sin(n theta) by recurrence
+        sn = sn*c1 + cn*s1;
+        cn = cnew;
+        const amrex::Real phi = twopi * archerHashUniform(ring.seed * 2654435761u + static_cast<unsigned int>(n));
+        const amrex::Real An = std::cos(phi), Bn = std::sin(phi);
+        f  += An * sn + Bn * cn;                                // A_n sin(n theta) + B_n cos(n theta)
+        fp += n * (An * cn - Bn * sn);                          // d f / d theta
+    }
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ringVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z,
+                           const GaussianRing& ring) noexcept
+{
+    const RingFrame fr = ringFrame(ring);
 
     // local coordinates: (X, Y) in the plane of the ring, Z along the direction of travel
     const amrex::Real px = x - ring.center[0], py = y - ring.center[1], pz = z - ring.center[2];
-    const amrex::Real X = px*e1[0] + py*e1[1] + pz*e1[2];
-    const amrex::Real Y = px*e2[0] + py*e2[1] + pz*e2[2];
-    const amrex::Real Z = px*d0    + py*d1    + pz*d2;
+    const amrex::Real X = px*fr.e1[0] + py*fr.e1[1] + pz*fr.e1[2];
+    const amrex::Real Y = px*fr.e2[0] + py*fr.e2[1] + pz*fr.e2[2];
+    const amrex::Real Z = px*fr.d[0]  + py*fr.d[1]  + pz*fr.d[2];
 
     const amrex::Real r = std::sqrt(X*X + Y*Y);
     if (r == 0.0) { return 0.0; }                               // axis: omega ~ exp(-R^2/delta^2)
@@ -83,19 +123,9 @@ amrex::Real ringVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z
 
     if (ring.varsigma != 0.0)
     {
-        constexpr amrex::Real twopi = 6.283185307179586;
         const amrex::Real g = -2.0 * (r - ring.R) / (ring.delta * ring.delta);    // (dW/dr) / W
-        amrex::Real cn = 1.0, sn = 0.0, f = 0.0, fp = 0.0;
-        for (int n = 1; n <= ring.nmodes; ++n)
-        {
-            const amrex::Real cnew = cn*c1 - sn*s1;             // cos(n theta), sin(n theta) by recurrence
-            sn = sn*c1 + cn*s1;
-            cn = cnew;
-            const amrex::Real phi = twopi * archerHashUniform(ring.seed * 2654435761u + static_cast<unsigned int>(n));
-            const amrex::Real An = std::cos(phi), Bn = std::sin(phi);
-            f  += An * sn + Bn * cn;                            // A_n sin(n theta) + B_n cos(n theta)
-            fp += n * (An * cn - Bn * sn);                      // d f / d theta
-        }
+        amrex::Real f, fp;
+        ringModeSum(ring, c1, s1, f, fp);
         // Near-axis taper: psi = amp f W T(r). Untapered, the fp/r term is singular on the ring's own axis
         // (theta is undefined there but W ~ exp(-R^2/delta^2) is not exactly zero), which blows up at grid
         // points that sit on an off-centre or tilted axis up to round-off. T = 3q^2 - 2q^3 (q = r/rt) ~ r^2
@@ -110,7 +140,27 @@ amrex::Real ringVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z
         w2 += amp * W * (fp * Y * T / (r*r) - f * (g*T + Tp) * c1);
     }
 
-    return w1 * e1[comp] + w2 * e2[comp];                      // back to global (x, y, z) components
+    return w1 * fr.e1[comp] + w2 * fr.e2[comp];                // back to global (x, y, z) components
+}
+
+// Radial displacement varsigma R f(theta) of the ring's centreline at the azimuth of the point (x, y, z): the
+// perturbed core sits at r = R + ringRadialDisplacement. Zero for an unperturbed ring (and on the axis). This is the
+// first-order shift of the vorticity above: omega_theta = W(r - amp f) to first order, so it marks where the core is.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ringRadialDisplacement (amrex::Real x, amrex::Real y, amrex::Real z, const GaussianRing& ring) noexcept
+{
+    if (ring.varsigma == 0.0) { return 0.0; }
+
+    const RingFrame fr = ringFrame(ring);
+    const amrex::Real px = x - ring.center[0], py = y - ring.center[1], pz = z - ring.center[2];
+    const amrex::Real X = px*fr.e1[0] + py*fr.e1[1] + pz*fr.e1[2];
+    const amrex::Real Y = px*fr.e2[0] + py*fr.e2[1] + pz*fr.e2[2];
+    const amrex::Real r = std::sqrt(X*X + Y*Y);
+    if (r == 0.0) { return 0.0; }
+
+    amrex::Real f, fp;
+    ringModeSum(ring, X / r, Y / r, f, fp);
+    return ring.varsigma * ring.R * f;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +176,10 @@ amrex::Real vortexRingVorticity (int comp, amrex::Real x, amrex::Real y, amrex::
 }
 
 // Archer et al. (2008) case B3: the ring above with a small random centreline perturbation.
+// archer_varsigma is the amplitude, in this solenoidal form (calibration in archerRingVorticity); other cases
+// quote theirs as a multiple of it.
+constexpr amrex::Real archer_varsigma = 5.3e-5;
+
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real archerRingVorticity (int comp, amrex::Real x, amrex::Real y, amrex::Real z) noexcept
 {
@@ -134,7 +188,7 @@ amrex::Real archerRingVorticity (int comp, amrex::Real x, amrex::Real y, amrex::
     // carries the full tilt of the displaced vorticity, which puts 3.4-4.2x more velocity amplitude into the
     // unstable band n = 9-11 for the same displacement; 5.3e-5 = 2e-4 / 3.8 matches their amplitude at n = 10
     // (within 12% for n = 9-11), so their timeline (still linear at t = 47.5) carries over.
-    ring.varsigma = 5.3e-5;
+    ring.varsigma = archer_varsigma;
     ring.nmodes   = 32;                                         // modes n = 1..32 (thin core)
     ring.seed     = 2008u;                                      // realisation of the random phases
     return ringVorticity(comp, x, y, z, ring);
@@ -195,7 +249,9 @@ amrex::Real collidingRingsWithWallImageVorticity (int comp, amrex::Real x, amrex
 // the centroid (tilt < 0: away from it). At tilt = pi/2 the axes lie in the plane of the triangle and
 // point at the centroid, the rings stand perpendicular to it, and the three collide at the centre.
 // Closest approach of neighbouring cores (centre to centre): side - 2R at tilt = 0, side - R at
-// tilt = pi/2.
+// tilt = pi/2. Each ring carries Archer's centreline perturbation (all modes n = 1..nmodes at one amplitude,
+// independent random phases per ring), seed_gain times Archer's amplitude, to trip the instability during the
+// approach and collision.
 // threeRingTriangleRing(k) is the single source of the geometry: InitialSDF.H marks the same cores.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 GaussianRing threeRingTriangleRing (int k) noexcept
@@ -206,7 +262,8 @@ GaussianRing threeRingTriangleRing (int k) noexcept
     constexpr amrex::Real side     = 1.88;  // triangle side = centre-to-centre distance
     constexpr amrex::Real z0       = 0.0;   // plane of the triangle
     constexpr amrex::Real tilt     = 1.5707963267948966;   // pi/2 towards the centroid [rad]
-    constexpr amrex::Real varsigma = 0.0;   // per-ring centreline perturbation (0 = none); seeds differ per ring
+    constexpr amrex::Real seed_gain = 100.0; // perturbation amplitude as a multiple of Archer's (0 = unperturbed)
+    constexpr amrex::Real varsigma = seed_gain * archer_varsigma;   // per-ring centreline perturbation; seeds differ per ring
 
     constexpr amrex::Real rho = side * 0.57735026918962576;     // circumradius, side / sqrt(3)
     constexpr amrex::Real h   = 0.86602540378443865;            // sqrt(3) / 2
@@ -219,7 +276,8 @@ GaussianRing threeRingTriangleRing (int k) noexcept
     ring.center[0] = rho * ux[k]; ring.center[1] = rho * uy[k]; ring.center[2] = z0;
     ring.dir[0]    = -st * ux[k]; ring.dir[1]    = -st * uy[k]; ring.dir[2]    = ct;
     ring.varsigma  = varsigma;
-    ring.seed      = 2008u + static_cast<unsigned int>(k);
+    ring.nmodes    = 16;                                        // modes n = 1..32, as in archerRingVorticity
+    ring.seed      = 2008u + static_cast<unsigned int>(k);      // ring 0 has Archer's realisation of the phases
     return ring;
 }
 
