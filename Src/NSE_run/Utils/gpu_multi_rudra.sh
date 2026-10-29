@@ -13,7 +13,7 @@
 #SBATCH --exclude=cbgpu0172
 
 source ~/.bashrc
-set -o pipefail
+set -euo pipefail
 
 # Source environment
 source "$HOME/env-rudra.sh" || exit 1

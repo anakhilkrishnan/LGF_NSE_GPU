@@ -11,7 +11,7 @@
 
 # Ensure the correctly configured CUDAROOT path is loaded
 source ~/.bashrc
-set -o pipefail
+set -euo pipefail
 
 # Load Pravega environment for Akhil
 source "$HOME/env-pravega.sh" || exit 1
