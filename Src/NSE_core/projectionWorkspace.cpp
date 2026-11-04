@@ -331,6 +331,7 @@ void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>&
 
             const int di = (sd == 0), dj = (sd == 1), dk = (sd == 2);
 
+            LGF_NSE_OMP_MFITER
             for (amrex::MFIter mfi(fld[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
             {
                 const amrex::Box& bx = mfi.tilebox();
@@ -371,6 +372,7 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i, amrex::Real 
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
+        LGF_NSE_OMP_MFITER
         for (amrex::MFIter mfi(w[i][idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box& bx = mfi.tilebox();
@@ -405,9 +407,11 @@ void ProjectionWorkspace::maskToSupport(amrex::Array<amrex::MultiFab, AMREX_SPAC
     for (int d = 0; d < AMREX_SPACEDIM; ++d)
     {
         const amrex::BoxArray keep = amrex::convert(supp, fld[d].ixType());
-        for (amrex::MFIter mfi(fld[d]); mfi.isValid(); ++mfi)
+
+        LGF_NSE_OMP_MFITER
+        for (amrex::MFIter mfi(fld[d], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
-            const amrex::BoxList outside = keep.complementIn(mfi.validbox());
+            const amrex::BoxList outside = keep.complementIn(mfi.tilebox());
             for (const amrex::Box& b : outside)
             {
                 fld[d][mfi].setVal<amrex::RunOn::Device>(0.0, b);
@@ -431,6 +435,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
 
     divU.setVal(0.0);
     const auto invdx = init_state.getGeom().InvCellSizeArray();
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
@@ -533,6 +538,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
 
         // --- dhat: L_C dhat = D r      (D = -G^dagger, so this is Eq. 35) --
         divU.setVal(0.0);
+        LGF_NSE_OMP_MFITER
         for (amrex::MFIter mfi(divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box& bx = mfi.tilebox();
@@ -549,6 +555,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         // --- rhs_vel = G dhat  (used twice: for u^i and for w^{i,i}) -------
         for (int d = 0; d < AMREX_SPACEDIM; ++d)
         {
+            LGF_NSE_OMP_MFITER
             for (amrex::MFIter mfi(rhs_vel[d], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
             {
                 const amrex::Box& bx = mfi.tilebox();

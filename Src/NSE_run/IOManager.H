@@ -16,6 +16,7 @@
 #include <fstream>
 #include <cstdio>
 
+#include <LgfNseOmp.H>
 #include <IOConfig.H>
 #include <SolverConfig.H>
 #include <FreestreamVelocity.H>

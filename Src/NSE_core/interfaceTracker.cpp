@@ -46,6 +46,7 @@ void InterfaceTracker::initializeSDF()
 
     // the active case of InitialSDF.H, clipped to +-psi_far, on valid and ghost
     // cells alike, so no boundary fill is needed here
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(psi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box bx = mfi.growntilebox();
@@ -111,6 +112,7 @@ void InterfaceTracker::checkBandInside(const amrex::BoxArray& next_ba, const std
 
     const amrex::Real lowest = std::numeric_limits<amrex::Real>::lowest();
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(psi); mfi.isValid(); ++mfi)
     {
         const amrex::Box& vbx = mfi.validbox();
@@ -196,6 +198,7 @@ void InterfaceTracker::fillPsiBoundaryImpl(amrex::MultiFab& psi_in, const amrex:
 
     // 1. every ghost cell is filled from its own box. Reads valid cells and
     //    boundary faces only, writes ghosts only, so there is no race
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(psi_in, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box gbx = mfi.growntilebox();
@@ -244,6 +247,7 @@ void InterfaceTracker::computeAdvectionRHSImpl(const amrex::MultiFab& psi_in, am
 {
     const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(rhs, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box bx = mfi.tilebox();
@@ -318,12 +322,13 @@ amrex::Real InterfaceTracker::computeCFL(const amrex::Array<amrex::MultiFab, AMR
     amrex::ReduceData<amrex::Real> reduce_data(reduce_op);
     using ReduceTuple = typename decltype(reduce_data)::Type;
 
-    for (amrex::MFIter mfi(psi); mfi.isValid(); ++mfi)
+    LGF_NSE_OMP_MFITER
+    for (amrex::MFIter mfi(psi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         amrex::GpuArray<amrex::Array4<amrex::Real const>, AMREX_SPACEDIM> u;
         for (int d = 0; d < AMREX_SPACEDIM; ++d) { u[d] = vel[d].const_array(mfi); }
 
-        reduce_op.eval(mfi.validbox(), reduce_data,
+        reduce_op.eval(mfi.tilebox(), reduce_data,
         [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> ReduceTuple
         {
             amrex::Real rate = 0.0;

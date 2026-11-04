@@ -13,11 +13,6 @@ if(AMReX_GPU_BACKEND STREQUAL "CUDA")
     setup_target_for_cuda_compilation(nserun)
 endif()
 
-if(AMReX_OMP)
-    find_package(OpenMP REQUIRED)
-    target_link_libraries(nserun PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
 target_include_directories(nserun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Link to the NSE core libraries

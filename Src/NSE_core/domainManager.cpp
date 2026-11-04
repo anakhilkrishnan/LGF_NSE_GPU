@@ -337,6 +337,7 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, amrex::Real time, 
         growBoxArr(xsoln_ba_without_outer, (n_buffer_box - n_shed_box) * max_grid_size, max_grid_size);
 
         // loop over tag_vort and tag_divN, zeroing all cells that are outside this layer
+        LGF_NSE_OMP_MFITER
         for (amrex::MFIter mfi(tag_divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box& bx = mfi.tilebox();
@@ -393,10 +394,22 @@ void DomainManager::computeSuppBoxArr(const FlowField& state, amrex::Real time, 
 
     amrex::ParallelFor(tag_divN, [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k)
     {
-        if (d_flags_ptr[box_no] != 0) return;   // early-out, now indexed by box_no
+#if LGF_NSE_OMP_HOST
+        int flag;
+        #pragma omp atomic read
+        flag = d_flags_ptr[box_no];
+        if (flag != 0) return;
+#else
+        if (d_flags_ptr[box_no] != 0) return;
+#endif
         if (amrex::max(amrex::Math::abs(tag_vort_arrs[box_no](i,j,k)), amrex::Math::abs(tag_divN_arrs[box_no](i,j,k))) > tag_thresh)
         {
+#if LGF_NSE_OMP_HOST
+            #pragma omp atomic write
+            d_flags_ptr[box_no] = 1;
+#else 
             amrex::Gpu::Atomic::Max(&d_flags_ptr[box_no], 1);
+#endif
         }
     });
     
@@ -507,6 +520,7 @@ void DomainManager::fillVelocityComponent(amrex::MultiFab& vel_comp,
     // velocity can be updated to all of psi's ghost cells
     const int ng_u = amrex::min(vel_comp.nGrow(), psi[0].nGrow());
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(vel_comp, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box bx  = mfi.growntilebox(ng_u);   // valid + ghosts

@@ -6,6 +6,7 @@
 #include <AMReX_Print.H>
 #include <AMReX_BLProfiler.H>
 
+#include <LgfNseOmp.H>
 #include <SpatialDiscretization.H>   // TheVortEdgeVector (tests only)
 
 #include <string>
@@ -69,6 +70,7 @@ inline void prolongCubic (const amrex::MultiFab& crse, amrex::MultiFab& fine, in
                                                          typ.nodeCentered(2))};
     const int ncomp = crse.nComp();
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(fine, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box bx = mfi.tilebox();

@@ -47,7 +47,13 @@ set(AMReX_MEM_PROFILE ON CACHE BOOL "Enable Memory Profiling" FORCE)
 
 # flags that can be overriden as needed
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "cmake build type")
-set(AMReX_OMP OFF CACHE BOOL "Enable OpenMP")
+# OpenMP: default ON for CPU builds, OFF for GPU builds; -DAMReX_OMP=ON/OFF overrides either
+if(AMReX_GPU_BACKEND STREQUAL "NONE")
+  set(AMReX_OMP ON  CACHE BOOL "Enable OpenMP (default ON for CPU builds)")
+else()
+  set(AMReX_OMP OFF CACHE BOOL "Enable OpenMP (default OFF for GPU builds)")
+endif()
+message(STATUS "LGF_NSE: AMReX_GPU_BACKEND=${AMReX_GPU_BACKEND}, AMReX_OMP=${AMReX_OMP}")
 
 
 # Download AMReX from GitHub

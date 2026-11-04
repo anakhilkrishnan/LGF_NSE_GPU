@@ -18,9 +18,9 @@
 #include <string>
 #include <utility>
 
+#include <SolverConfig.H>
 #include <InterfaceDiscretization.H>
 #include <InitialSDF.H>
-#include <SolverConfig.H>
 
 // SIGN CONVENTION: psi > 0 inside an interface, psi < 0 outside (see InitialSDF.H, where the
 // initial interfaces are defined). Interfaces are closed surfaces, so everything far away is

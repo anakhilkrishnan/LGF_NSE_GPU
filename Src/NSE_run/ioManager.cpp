@@ -25,6 +25,7 @@ void averageCellToNode (amrex::MultiFab& nd, int dcomp, const amrex::MultiFab& c
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(cc.nGrowVect().allGE(1), "averageCellToNode: cc needs >= 1 ghost");
     constexpr amrex::Real w = amrex::Real(1.0) / amrex::Real(1 << AMREX_SPACEDIM);
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(nd, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
@@ -324,10 +325,11 @@ void IOManager::writePlot(PlotKind kind, int step, amrex::Real time,
     {
         cc_full.ParallelCopy(computePlotDivU(state), 0, c, 1, 0, 0); ++c;
 
-        for (amrex::MFIter mfi(cc_full); mfi.isValid(); ++mfi)
+        LGF_NSE_OMP_MFITER
+        for (amrex::MFIter mfi(cc_full, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
-            const amrex::Box& bx = mfi.validbox();
-            cc_full[mfi].setVal<amrex::RunOn::Device>(supp_ba.intersects(bx) ? 1.0 : 0.0, bx, c, 1);
+            const amrex::Box& bx = mfi.tilebox();
+            cc_full[mfi].setVal<amrex::RunOn::Device>(supp_ba.intersects(mfi.validbox()) ? 1.0 : 0.0, bx, c, 1);
         }
         ++c;
 
@@ -438,10 +440,11 @@ void IOManager::writeRingDiagnostics (int step, amrex::Real time, amrex::Real dt
 #endif
     using ReduceTuple = typename decltype(reduce_data)::Type;
 
-    std::vector<std::pair<int, amrex::Box>> isects;
-    for (amrex::MFIter mfi(state.getPres()); mfi.isValid(); ++mfi)
+    LGF_NSE_OMP_MFITER
+    for (amrex::MFIter mfi(state.getPres(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
-        supp_ba.intersections(mfi.validbox(), isects);
+        std::vector<std::pair<int, amrex::Box>> isects;
+        supp_ba.intersections(mfi.tilebox(), isects);
         if (isects.empty()) { continue; }
 
         auto const& u  = state.getVel(0).const_array(mfi);

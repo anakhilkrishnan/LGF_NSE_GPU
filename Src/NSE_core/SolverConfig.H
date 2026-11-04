@@ -1,6 +1,8 @@
 #ifndef SOLVERCONFIG_H_
 #define SOLVERCONFIG_H_
 
+#include <LgfNseOmp.H> // provides LGF_NSE_OMP_MFITER and LGF_NSE_OMP_HOST to every file that includes this
+
 #include <AMReX_ParmParse.H>
 #include <AMReX_Array.H>
 #include <string>

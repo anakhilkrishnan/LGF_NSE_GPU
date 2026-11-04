@@ -102,6 +102,7 @@ void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex
         const int d1  = (dir + 1) % 3;                   // directions spanning the dual face
         const int d2  = (dir + 2) % 3;                   // (2D: dir = 2, so d1 = 0, d2 = 1)
 
+        LGF_NSE_OMP_MFITER
         for (amrex::MFIter mfi(w0[c], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
             const amrex::Box bx = mfi.growntilebox();    // omega_0 is known everywhere: fill ghosts too
@@ -141,6 +142,7 @@ void fillVorticityComponent(amrex::MultiFab& vort,
     static_assert(dim >= 0 && dim < 3, "fillVorticityComponent: dim is an edge direction (0, 1, 2)");
     static_assert(AMREX_SPACEDIM == 3 || dim == 2, "fillVorticityComponent: 2D only has omega_z (dim = 2)");
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(vort, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
@@ -252,6 +254,7 @@ amrex::MultiFab computeDivNonLinearTerm(const FlowField& state, amrex::Real time
 
     amrex::MultiFab divN(ba, dm, state.getPres().nComp(), 0);
 
+    LGF_NSE_OMP_MFITER
     for (amrex::MFIter mfi(divN, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
@@ -279,6 +282,7 @@ void computeDivU(amrex::MultiFab& output_divU, const FlowField& input_state)
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
 
     // compute divU and store in input_state
+    LGF_NSE_OMP_MFITER
     for(amrex::MFIter mfi(output_divU, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
         const amrex::Box& bx = mfi.tilebox();
@@ -322,10 +326,11 @@ amrex::Real computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArr
     // You reduce over CELL-centered boxes (divergence is cell-centered),
     // so iterate something cell-centered — e.g. the pressure MultiFab —
     // to get the right box/loop domain, and read the face velocities into it.
-    for (amrex::MFIter mfi(input_state.getPres()); mfi.isValid(); ++mfi)
+    LGF_NSE_OMP_MFITER
+    for (amrex::MFIter mfi(input_state.getPres(), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
-        const amrex::Box& bx = mfi.validbox();
-        if (restrict_ba != nullptr && !restrict_ba->contains(bx)) { continue; }
+        const amrex::Box& bx = mfi.tilebox();
+        if (restrict_ba != nullptr && !restrict_ba->contains(mfi.validbox())) { continue; }
 
         AMREX_D_TERM(auto const& u = input_state.getVel(0).const_array(mfi);,
                     auto const& v = input_state.getVel(1).const_array(mfi);,

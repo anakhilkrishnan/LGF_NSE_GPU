@@ -33,8 +33,9 @@ A *Sharp Interface-Capturing method* is the next immediate goal. Involves:
 18. Add component-wise vorticity to plotfiles (!! Decide if necessary first !!).
 19. Consider switching IO_int type variables to physical time instead of step count.
 20. Fix the GPU job script for PARAM Rudra (check ThreeVortexRings Claude thread).
-21. Make the CPU version OpenMP compatible (idea is to have only a few ranks per node (say 2 to 8) and have other processes as threads).
-22. Split the monolithic writeDiagnostics file into more meaningful quanities which are generalizable and meaningful on one side, and problem specific on the other.
+21. Make the CPU version OpenMP compatible (idea is to have lesser ranks per node).
+22. Split the monolithic writeDiagnostics file into quantities which are generalizable and meaningful on one side, and problem specific on the other.
+23. `max_grid_size` to be split into `compute_box_size` and `tag_box_size`.
 
 ## Yet to decide
 
