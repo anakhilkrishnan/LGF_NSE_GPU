@@ -82,7 +82,6 @@ class ProjectionWorkspace
         amrex::Real gapT(int i)     const { return rk_gap(i);  }
 
     public: 
-
         // public, so it can be passed to DomainManager when field needs to be updated
         LGFOpenBC lgf_poisson_solver;
 

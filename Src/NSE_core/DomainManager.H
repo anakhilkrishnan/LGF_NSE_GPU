@@ -25,7 +25,6 @@
 class DomainManager
 {
     private:
-        
         // the Geometry, BoxArray and DistributionMapping that refer to Dxsoln
         // along with the box_tag_arr that only represents Dsupp
         amrex::Geometry geom;
@@ -62,7 +61,6 @@ class DomainManager
         int computeRegridInterval(const FlowField& state) const;
 
     public:
-        
         // public scratch variables
         bool did_snug_domain_change;
         amrex::Array<amrex::Real, AMREX_SPACEDIM> refresh_err_max_norm;

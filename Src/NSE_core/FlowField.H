@@ -20,7 +20,6 @@ using namespace amrex;
 class FlowField 
 {
     private:
-
         amrex::Geometry globalgeom;
         
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> vel;
