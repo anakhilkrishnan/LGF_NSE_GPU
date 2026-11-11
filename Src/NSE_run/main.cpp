@@ -139,8 +139,13 @@ void extendedMain()
         workspace.initializePresField(state_n, dmgr.getSuppBoxArr(), time_keeper);
         state_n.setBoundary();
 
-        // populate psi from the active case in InitialSDF.H
-        if (tracker) { tracker->initializeSDF(); }
+        // populate psi from the active case in InitialSDF.H; with reinitialization on, start
+        // from the distance to its zero level set (a perturbed case's psi is only near one)
+        if (tracker)
+        {
+            tracker->initializeSDF();
+            if (tracker->reinitEnabled()) { tracker->reinitializeAndReport(step_keeper, "initial condition"); }
+        }
     }
     
     io.writeRingDiagnostics(step_keeper, time_keeper, dt_master, sol_cfg.invRe, state_n, dmgr);
@@ -186,6 +191,10 @@ void extendedMain()
         // update counters
         time_keeper += dt_master;
         step_keeper++;
+
+        // closest-point reinitialization of psi, on its interval or when psi has drifted from
+        // a distance function; before the snug domain management, whose band check reads psi
+        if (tracker) { tracker->reinitializeIfDue(step_keeper); }
 
         // snug domain management after timestep
         amrex::Gpu::streamSynchronize();

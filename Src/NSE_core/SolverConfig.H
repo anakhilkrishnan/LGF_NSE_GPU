@@ -49,6 +49,9 @@ struct SolverConfig
     bool track_interface = false;
     std::string interface_scheme = "WENO5";   // WENO5 or HOUC5
     amrex::Real interface_psi_far = 0.0;      // clip magnitude of psi (physical units)
+    int interface_reinit_int = 0;             // closest-point reinitialization every N steps (0: not on an interval)
+    amrex::Real interface_reinit_drift = 0.0; // ... or when ||grad psi| - 1| next to the interface exceeds this (0: off)
+    int interface_reinit_degree = 3;          // its interpolant: 3 (tricubic, 4^3 cells) or 5 (triquintic, 6^3)
 
     void readInputs()
     {
@@ -86,8 +89,15 @@ struct SolverConfig
         {
             pp.query("interface_scheme", interface_scheme);
             pp.get("interface_psi_far", interface_psi_far);
+            pp.query("interface_reinit_int", interface_reinit_int);
+            pp.query("interface_reinit_drift", interface_reinit_drift);
+            pp.query("interface_reinit_degree", interface_reinit_degree);
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(interface_scheme == "WENO5" || interface_scheme == "HOUC5",
                 "inputs: interface_scheme must be WENO5 or HOUC5");
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(interface_reinit_int >= 0 && interface_reinit_drift >= 0.0,
+                "inputs: interface_reinit_int and interface_reinit_drift must be >= 0");
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(interface_reinit_degree == 3 || interface_reinit_degree == 5,
+                "inputs: interface_reinit_degree must be 3 or 5");
         }
 
         // refine_ratio related checks
@@ -120,7 +130,9 @@ struct SolverConfig
                << " | dt " << set_dt << " (base " << set_dt_base << ")\n";
         if (track_interface)
         {
-            amrex::Print() << "Interface tracking: " << interface_scheme << " | psi_far " << interface_psi_far << "\n";
+            amrex::Print() << "Interface tracking: " << interface_scheme << " | psi_far " << interface_psi_far
+                           << " | reinit every " << interface_reinit_int << " steps (0: off), drift trigger "
+                           << interface_reinit_drift << " (0: off), degree " << interface_reinit_degree << "\n";
         }
     }
 };
