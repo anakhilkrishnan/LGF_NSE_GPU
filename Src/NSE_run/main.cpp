@@ -181,7 +181,7 @@ void extendedMain()
         auto step_start_time = amrex::second();
 
         // IF-HERK integrator
-        workspace.advanceTimeStep(state_n, 0.0, dmgr.getSuppBoxArr(), time_keeper, tracker.get());   // time at start of step
+        workspace.advanceTimeStep(state_n, dmgr.getSuppBoxArr(), time_keeper, tracker.get());   // time at start of step
 
         // update counters
         time_keeper += dt_master;

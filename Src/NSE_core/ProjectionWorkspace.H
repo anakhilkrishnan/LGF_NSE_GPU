@@ -3,8 +3,6 @@
 
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
-#include <AMReX_BCRec.H>
-#include <AMReX_PhysBCFunct.H>
 #include <AMReX_Math.H>
 #include <AMReX_Array.H>
 #include <AMReX_BLProfiler.H>
@@ -13,48 +11,24 @@
 #include <DomainManager.H>
 #include <FlowField.H>
 #include <SpatialDiscretization.H>
-#include <RKCoefficients.H>
+#include <IFHERK.H>
 #include <LGFOpenBC.H>
 #include <InterfaceTracker.H>
-
-using namespace amrex;
 
 class ProjectionWorkspace
 {
     private:
-        static constexpr int MAX_STAGES = RKButcher::MAX_STAGES;
-        // brought for declaring scratch for IF-HERK along with shifted tableau
+        // layout of the scratch fields, kept for regridOnto()
+        int n_comp;
+        int n_ghost;
 
-        // variables that are initialized in constructor call and live 
-        // throughout solver life cycle
-        int n_lookup;
-        int rk_stages;
-        amrex::Real cfl;
-
-        amrex::Real dt;
-        amrex::Real invRe;
-        amrex::Real IF_eps;
+        // time integrator: shifted tableau, time step and integrating factor
+        IFHERK ifherk;
 
         FlowField stage;
 
-        // rk shifted coefficients and scratch variables
-        amrex::Array2D<amrex::Real, 1, MAX_STAGES, 1, MAX_STAGES> rk_at; // a~_{i,j}
-        amrex::Array1D<amrex::Real, 1, MAX_STAGES> rk_ct; // c~_i
-        amrex::Array1D<amrex::Real, 1, MAX_STAGES> rk_gap; // c~_i - c~_{i-1}
-        amrex::Array1D<int, 1, MAX_STAGES> rk_if_idx;
-
-        // IF scratch
-        amrex::Gpu::DeviceVector<amrex::Real> IF_1d_comp;
-        
         // scratch fields
-        amrex::BoxArray tag_ba; // BoxArray that represents tagged support within ba
-
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> rhs_vel;
-
-        // temp
-        int  n_IF;                                     // IF stencil half-width
-        amrex::Vector<amrex::Real>            rk_unique_gaps;
-        amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real>> if_table;  // [gap][0..n_IF]
 
         // IF-HERK registers.  1-based in j: w[j] holds w^{.,j}; w[0] unused.
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> q;
@@ -62,24 +36,8 @@ class ProjectionWorkspace
         amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> IF_buff;   // sweep scratch
         amrex::Vector<amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>> w;
 
-        // interface transport registers, defined only when tracking. psi has no viscous term,
-        // so no integrating factor: psi_k = psi(t_k), psi_stage = psi^i, and psi_rhs[j] = L^j,
-        // 1-based like w (psi_rhs[0] unused)
-        bool track_interface;
-        amrex::MultiFab psi_k;
-        amrex::MultiFab psi_stage;
-        amrex::Vector<amrex::MultiFab> psi_rhs;
-
-        void defineInterfaceRegisters(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in);
-        void advanceInterfaceStage(InterfaceTracker& tracker, int i, amrex::Real t_stage);
-
-        void setupRKCoeffs(const RKButcher& rkbt);
-        void precomputeIFs(const amrex::Geometry& geom);
-
-        // 1-based accessors
-        amrex::Real aT(int i,int j) const { return rk_at(i,j); }
-        amrex::Real cT(int i)       const { return rk_ct(i);   }
-        amrex::Real gapT(int i)     const { return rk_gap(i);  }
+        // (re)defines rhs_vel, q, r, IF_buff, w and divU on a grid
+        void defineScratch(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in);
 
     public: 
         // public, so it can be passed to DomainManager when field needs to be updated
@@ -93,14 +51,16 @@ class ProjectionWorkspace
 
         ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config);
 
+        // the one source of the time step and the tableau
+        const IFHERK& getIntegrator() const { return ifherk; }
+
         // functions for initialization
         void initializePresField(FlowField& init_state, const amrex::BoxArray& init_supp_ba, amrex::Real time);
 
-        void applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, int if_idx);
         void computeGStage(const FlowField& st, int i, amrex::Real t_stage);  // N(u^{i-1} + u_inf(t_stage))   // g^i -> w[i]
         void maskToSupport(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld, const amrex::BoxArray& supp);
-        void advanceTimeStep(FlowField& state_n, const amrex::Real dt_in, const amrex::BoxArray& supp_ba, amrex::Real time_n,
-                             InterfaceTracker* tracker);    // nullptr when track_interface is off
+        void advanceTimeStep(FlowField& state_n, const amrex::BoxArray& supp_ba, amrex::Real time_n,
+                             InterfaceTracker* tracker);    // nullptr when no interface is tracked
         void regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm);
 };
 

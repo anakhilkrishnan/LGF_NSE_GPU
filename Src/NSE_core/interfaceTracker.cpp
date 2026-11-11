@@ -88,6 +88,11 @@ void InterfaceTracker::regrid(const amrex::Geometry& new_geom, const amrex::BoxA
     dm = new_dm;
     psi = std::move(new_psi);
 
+    // the stage registers hold no state between steps: drop them, and the next
+    // advanceStage() defines them on the new grid
+    psi_stage.clear();
+    psi_rhs.clear();
+
     fillPsiBoundary(psi);
 }
 
@@ -344,4 +349,52 @@ amrex::Real InterfaceTracker::computeCFL(const amrex::Array<amrex::MultiFab, AMR
     amrex::Real rate_max = amrex::get<0>(reduce_data.value(reduce_op));
     amrex::ParallelDescriptor::ReduceRealMax(rate_max);
     return rate_max * dt;
+}
+
+void InterfaceTracker::defineStageRegisters(int n_stages)
+{
+    // psi_stage is fed back to the right-hand side, which needs LS_N_GHOST ghost cells
+    defineLikePsi(psi_stage, LS_N_GHOST);
+    psi_stage.setVal(0.0);
+
+    psi_rhs.clear();
+    psi_rhs.resize(n_stages + 1);                 // psi_rhs[0] left undefined
+    for (int j = 1; j <= n_stages; ++j)
+    {
+        defineLikePsi(psi_rhs[j], 0);
+        psi_rhs[j].setVal(0.0);
+    }
+}
+
+void InterfaceTracker::advanceStage(int i, const IFHERK& integrator,
+                                    const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                                    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf)
+{
+    BL_PROFILE("<Compute> InterfaceTracker::advanceStage()");
+
+    // psi^i = psi_k + dt sum_{j<=i} a~_{i,j} L^j,  L^i = L(psi^{i-1}, u^{i-1})
+    //
+    // plain explicit RK with the shifted tableau: vel and uinf are the same u^{i-1} and
+    // u_inf(t_stage) that the flow solver feeds to N, and psi^{i-1} is psi_k itself on the
+    // first stage. psi is only written by finishStep(), so it is psi_k for the whole step
+    // (the right-hand side refills its ghost cells, nothing more)
+    const int n_stages = integrator.nStages();
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(i >= 1 && i <= n_stages, "InterfaceTracker::advanceStage: stage out of range");
+
+    if (static_cast<int>(psi_rhs.size()) != n_stages + 1) { defineStageRegisters(n_stages); }
+
+    amrex::MultiFab& psi_prev = (i == 1) ? psi : psi_stage;
+    computeAdvectionRHS(psi_prev, psi_rhs[i], vel, uinf);
+
+    const amrex::Real dt = integrator.timeStep();
+    amrex::MultiFab::Copy(psi_stage, psi, 0, 0, n_interface, 0);
+    for (int j = 1; j <= i; ++j)
+    { amrex::MultiFab::Saxpy(psi_stage, dt * integrator.aT(i,j), psi_rhs[j], 0, 0, n_interface, 0); }
+}
+
+void InterfaceTracker::finishStep()
+{
+    // psi_{k+1} = psi^s, since a~_{s,j} = b_j
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!psi_stage.empty(), "InterfaceTracker::finishStep: no stage was advanced");
+    amrex::MultiFab::Copy(psi, psi_stage, 0, 0, n_interface, 0);
 }

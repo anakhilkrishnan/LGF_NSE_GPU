@@ -21,6 +21,7 @@
 #include <SolverConfig.H>
 #include <InterfaceDiscretization.H>
 #include <InitialSDF.H>
+#include <IFHERK.H>
 
 // SIGN CONVENTION: psi > 0 inside an interface, psi < 0 outside (see InitialSDF.H, where the
 // initial interfaces are defined). Interfaces are closed surfaces, so everything far away is
@@ -82,6 +83,15 @@ class InterfaceTracker
         AdvectionScheme scheme;
         amrex::Real psi_far;    // clip magnitude of psi: the far-field value, and the value of cells new to the domain
 
+        // Runge-Kutta stage storage for the transport of psi. psi has no viscous term, so no
+        // integrating factor: psi_stage = psi^i and psi_rhs[j] = L^j, 1-based like the flow
+        // solver's w registers (psi_rhs[0] unused). psi itself stays at psi(t_k) until
+        // finishStep(). Defined by the first advanceStage() after construction or regrid()
+        amrex::MultiFab psi_stage;
+        amrex::Vector<amrex::MultiFab> psi_rhs;
+
+        void defineStageRegisters(int n_stages);
+
     public:
 
         // getter functions
@@ -104,6 +114,14 @@ class InterfaceTracker
                                  amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf) const;
         amrex::Real computeCFL(const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
                                amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf, amrex::Real dt) const;
+
+        // time integration, driven by the flow solver's stage loop: advanceStage(i, ...) for
+        // i = 1 ... integrator.nStages() with the velocity u^{i-1} and freestream that stage's
+        // nonlinear term uses, then finishStep() once to accept psi^s as psi(t_{k+1})
+        void advanceStage(int i, const IFHERK& integrator,
+                          const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& vel,
+                          amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> const& uinf);
+        void finishStep();
 
         // supporting functions
         template <AdvectionScheme scheme_t>

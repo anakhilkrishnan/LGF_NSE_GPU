@@ -2,6 +2,7 @@
 add_library(NSE_core_lib STATIC
                 domainManager.cpp
                 flowField.cpp
+                ifherk.cpp
                 projectionWorkspace.cpp
                 interfaceTracker.cpp
                 InterfaceDiscretization.H
@@ -9,6 +10,7 @@ add_library(NSE_core_lib STATIC
                 Prolongation.H
                 DomainManager.H
                 FlowField.H
+                IFHERK.H
                 ProjectionWorkspace.H
                 RKCoefficients.H
                 SpatialDiscretization.H

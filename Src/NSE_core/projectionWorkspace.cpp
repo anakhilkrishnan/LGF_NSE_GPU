@@ -2,363 +2,57 @@
 #include <FreestreamVelocity.H>
 
 ProjectionWorkspace::ProjectionWorkspace(const amrex::Geometry& geom_in, const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in, const SolverConfig& config)
-    : stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost), lgf_poisson_solver(geom_in, ba_in, config.n_lookup, config.n_ghost_max)
+    : n_comp(config.n_comp), n_ghost(config.n_ghost),
+      ifherk(getRKButcher(), geom_in, config.invRe, config.set_dt, config.n_IF, config.int_fact_eps),
+      stage(geom_in, ba_in, dm_in, config.n_comp, config.n_ghost),
+      lgf_poisson_solver(geom_in, ba_in, config.n_lookup, config.n_ghost_max)
 {
-    // initializing required solver parameters
-    n_lookup = config.n_lookup;
-    invRe = config.invRe;
-    IF_eps = config.int_fact_eps;
-    n_IF = config.n_IF;
-    dt = config.set_dt;
-    cfl = config.cfl;
-    track_interface = config.track_interface;
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(n_ghost >= ifherk.nGhostRequired(),
+        "n_ghost must be at least the IF stencil half-width");
+    ifherk.printSummary();
 
-    // copying parameters necessary for constructor only
-    int n_comp = config.n_comp;
-    int n_ghost = config.n_ghost;
-
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        // convert the box array to face centered
-        amrex::BoxArray ba_face = amrex::convert(ba_in, amrex::IntVect::TheDimensionVector(idim));
-
-        // declare the specific velocity component
-        rhs_vel[idim].define(ba_face, dm_in, n_comp, n_ghost);
-
-        // initialize velocities upon creation
-        rhs_vel[idim].setVal(0.0);
-    }
-
-    // initialize divU upon creation
-    divU.define(ba_in, dm_in, n_comp, n_ghost);
-    divU.setVal(0.0);
+    defineScratch(ba_in, dm_in);
 
     divU_max_norm = 0.0;
     divU_at_end_max_norm = 0.0;
     divU_at_end_max_norm_support = 0.0;
+}
 
-    // // compute shifted RK coeffs 
-    // setupRKCoeffs(getRKButcher());
+void ProjectionWorkspace::defineScratch(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in)
+{
+    // the zero fill is needed, not cosmetic: r^i is assembled with ghost cells included, so
+    // the ghost cells of a w register are read (into ghost cells of r that nothing uses)
+    // before any applyIF() has filled them. Left uninitialized, a debug build traps there on
+    // AMReX's signaling-NaN fill
+    w.resize(ifherk.nStages() + 1);               // w[0] left undefined
 
-    setupRKCoeffs(getRKButcher());
-    precomputeIFs(geom_in);                       // sets n_IF
-
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(config.n_ghost >= n_IF,
-        "n_ghost must be at least the IF stencil half-width");
-
-    w.resize(rk_stages + 1);                      // w[0] left undefined
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
-        amrex::BoxArray bf = amrex::convert(ba_in, amrex::IntVect::TheDimensionVector(idim));
-        q[idim]      .define(bf, dm_in, n_comp, n_ghost);
-        r[idim]      .define(bf, dm_in, n_comp, n_ghost);
-        IF_buff[idim].define(bf, dm_in, n_comp, n_ghost);
+        // convert the box array to face centered
+        const amrex::BoxArray ba_face = amrex::convert(ba_in, amrex::IntVect::TheDimensionVector(idim));
+
+        rhs_vel[idim].define(ba_face, dm_in, n_comp, n_ghost);
+        q[idim]      .define(ba_face, dm_in, n_comp, n_ghost);
+        r[idim]      .define(ba_face, dm_in, n_comp, n_ghost);
+        IF_buff[idim].define(ba_face, dm_in, n_comp, n_ghost);
+        rhs_vel[idim].setVal(0.0);
         q[idim].setVal(0.0);  r[idim].setVal(0.0);  IF_buff[idim].setVal(0.0);
 
-        for (int j = 1; j <= rk_stages; ++j)
+        for (int j = 1; j <= ifherk.nStages(); ++j)
         {
-            w[j][idim].define(bf, dm_in, n_comp, n_ghost);
+            w[j][idim].define(ba_face, dm_in, n_comp, n_ghost);
             w[j][idim].setVal(0.0);
         }
     }
 
-    if (track_interface) { defineInterfaceRegisters(ba_in, dm_in); }
-}
-
-void ProjectionWorkspace::defineInterfaceRegisters(const amrex::BoxArray& ba_in, const amrex::DistributionMapping& dm_in)
-{
-    // one component per interface of the active case in InitialSDF.H; psi_stage is
-    // fed back to the right-hand side, which needs LS_N_GHOST ghost cells
-    psi_k.define(ba_in, dm_in, N_INTERFACE, 0);
-    psi_stage.define(ba_in, dm_in, N_INTERFACE, LS_N_GHOST);
-    psi_k.setVal(0.0);  psi_stage.setVal(0.0);
-
-    psi_rhs.resize(rk_stages + 1);                // psi_rhs[0] left undefined
-    for (int j = 1; j <= rk_stages; ++j)
-    {
-        psi_rhs[j].define(ba_in, dm_in, N_INTERFACE, 0);
-        psi_rhs[j].setVal(0.0);
-    }
-}
-
-void ProjectionWorkspace::setupRKCoeffs(const RKButcher& rkbt)
-{
-    BL_PROFILE("<Setup> setupRKCoeffs()");
-
-    // set value of rk_stages member
-    rk_stages = rkbt.n_stages;
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_stages >= 3 && rk_stages <= RKButcher::MAX_STAGES,
-        "incompatible rk_stages and MAX_STAGES!");
-
-    // check if tableau is valid
-    const amrex::Real eps = 1.0e-14;
-
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.c[0]) < eps,
-        "c_1 must be 0 (explicit first stage)");
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.c[rk_stages-1] - 1.0) < eps,
-        "c_s must be 1: required for second-order constraints, and what makes "
-        "the final integrating factor the identity (footnote 16)");
-
-    amrex::Real bsum = 0.0;
-    for (int j = 0; j < rk_stages; ++j) { bsum += rkbt.b[j]; }
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(bsum - 1.0) < eps, "sum(b) != 1");
-
-    for (int i = 0; i < rk_stages; ++i)
-    {
-        amrex::Real rowsum = 0.0;
-        for (int j = 0; j < rk_stages; ++j)
-        {
-            if (j >= i) { AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rkbt.A[i][j]) < eps,
-                "A must be strictly lower triangular (explicit scheme)"); }
-            rowsum += rkbt.A[i][j];
-        }
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rowsum - rkbt.c[i]) < eps,
-            "row sums of A must equal c (consistency)");
-    }
-
-    // initialize values to be computed to zero
-    for (int i = 1; i <= RKButcher::MAX_STAGES; ++i)
-    {
-        rk_ct(i) = 0.0;  rk_gap(i) = 0.0;  rk_if_idx(i) = -1;
-        for (int j = 1; j <= RKButcher::MAX_STAGES; ++j) { rk_at(i,j) = 0.0; }
-    }
-
-    // compute and store shifted coefficients
-    for (int i = 1; i < rk_stages; ++i)
-    {
-        rk_ct(i) = rkbt.c[i];
-        for (int j = 1; j <= rk_stages; ++j)
-        {
-            rk_at(i,j) = rkbt.A[i][j-1];
-        }
-    }
-    rk_ct(rk_stages) = 1.0;
-    for (int j = 1; j <= rk_stages; ++j)
-    {
-        rk_at(rk_stages,j) = rkbt.b[j-1];
-    }
-
-    // compute ct_i - ct_i-1 values
-    amrex::Real prev = 0.0;
-    for (int i = 1; i <= rk_stages; ++i) { rk_gap(i) = rk_ct(i) - prev; prev = rk_ct(i); }
-
-    // validate the shifted tableau
-    for (int i = 1; i <= rk_stages; ++i)
-    {
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(rk_at(i,i)) > eps,
-            "a~_{i,i} == 0: Eq. (30) divides by it when forming w^{i,i}");
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_gap(i) > -eps,
-            "negative sub-step width: H^i would be E(-alpha), which amplifies the "
-            "grid-scale mode. Tableau is IF-incompatible -- this is what rules out "
-            "SSP-RK3, whose c = [0, 1, 1/2]");
-    }
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(rk_gap(rk_stages) < eps,
-        "final sub-step width should vanish when c_s == 1");
-
-    // make sub-vector of unique intervals, while updating a stage map
-    rk_unique_gaps.clear();
-
-    for (int i = 1; i <= rk_stages; ++i)
-    {
-        if (rk_gap(i) < 1.0e-14) { rk_if_idx(i) = -1; continue; }   // H^i = I, skip it
-
-        int found = -1;
-        for (int m = 0; m < rk_unique_gaps.size(); ++m)
-        {
-            if (std::abs(rk_gap(i) - rk_unique_gaps[m]) < 1.0e-14) { found = m; break; }
-        }
-        if (found < 0)
-        {
-            rk_unique_gaps.push_back(rk_gap(i));
-            found = static_cast<int>(rk_unique_gaps.size()) - 1;
-        }
-        rk_if_idx(i) = found;
-    }
-}
-
-// void ProjectionWorkspace::precomputeIFs(const amrex::Geometry& geom)
-// {
-//     BL_PROFILE("<Setup> precomputeIFs()");
-
-//     // IMPORTANT ASSUMPTION: dx = dy = dz
-//     // find cell sizes, computing invdx2 using dx only
-//     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-//     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2 = invdx[0] * invdx[0];
-
-//     // compute n required for desired eps tolerance
-//     amrex::Real max_gap = 0.0;
-//     for (auto g : rk_unique_gaps)
-//     {
-//         max_gap = std::max(max_gap, g);
-//     }
-
-//     // checking what stencil size is needed for desired error
-//     int n_IF = 14;
-//     // amrex::Real max_alpha = max_gap * dt * invRe * invdx2;
-//     // while(max_alpha^n_IF)
-//     // n_IF = IFSupportSize((max_gap * dt * invRe * invdx2), IF_eps)
-
-//     // compute modified Bessel in 1D and store in array
-
-// }
-
-// amrex::Real ProjectionWorkspace::computeDt(const FlowField& state_n) const
-// {
-//     BL_PROFILE("<Compute> computeDt()");
-
-//     const amrex::Geometry& geom = state_n.getGeom();
-//     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-//     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx2;
-//     for (int d = 0; d < AMREX_SPACEDIM; ++d) 
-//     {
-//         invdx2[d] = invdx[d] * invdx[d];
-//     }
-
-//     // cfl constraint: advective limit on dt
-//     amrex::Real u_max = state_n.getVel(0).norm0(0, 0, false);
-//     amrex::Real adv_metric = u_max * invdx[0];
-
-//     amrex::Real v_max = state_n.getVel(1).norm0(0, 0, false);
-//     adv_metric += v_max * invdx[1];
-
-// #if AMREX_SPACEDIM == 3
-//     amrex::Real w_max = state_n.getVel(2).norm0(0, 0, false);
-//     adv_metric += w_max * invdx[2];
-// #endif
-
-//     // dt_adv = CFL / ( |u|/dx + |v|/dy + |w|/dz )
-//     amrex::Real dt_adv = cfl / (adv_metric + 1.0e-12); // epsilon to prevent div-by-zero
-
-//     // diffusive limit on dt
-//     amrex::Real diff_metric = 1.0 * invdx2[0];
-    
-//     diff_metric += 1.0 * invdx2[1];
-
-//     #if AMREX_SPACEDIM == 3
-//         diff_metric += 1.0 * invdx2[2];
-//     #endif
-
-//     // for explicit schemes, Fourier number <= 0.5 dt_diff <= 0.5 * Re / (
-//     // 1/dx^2 + 1/dy^2 + 1/dz^2 )
-//     amrex::Real dt_diff = 0.5 / (invRe * diff_metric);
-
-//     return amrex::min(dt_adv, dt_diff);
-// }
-
-// ---------------------------------------------------------------------------
-// 3.  precomputeIFs -- 1D tables  g_a(n) = exp(-2a) I_n(2a),  n = 0..n_IF
-// ---------------------------------------------------------------------------
-
-void ProjectionWorkspace::precomputeIFs(const amrex::Geometry& geom)
-{
-    BL_PROFILE("<Setup> precomputeIFs()");
-
-    // IMPORTANT ASSUMPTION: dx == dy == dz
-    const amrex::Real dx  = geom.CellSize(0);
-    const amrex::Real dx2 = dx * dx;
-    AMREX_ALWAYS_ASSERT(std::abs(geom.CellSize(1) - dx) < 1.0e-12 * dx);
-#if AMREX_SPACEDIM == 3
-    AMREX_ALWAYS_ASSERT(std::abs(geom.CellSize(2) - dx) < 1.0e-12 * dx);
-#endif
-
-    if_table.resize(rk_unique_gaps.size());
-
-    for (std::size_t m = 0; m < rk_unique_gaps.size(); ++m)
-    {
-        const amrex::Real alpha = rk_unique_gaps[m] * dt * invRe / dx2;
-
-        // ascending series: I_n(z) = sum_k (z/2)^{n+2k} / (k! (n+k)!)
-        amrex::Vector<amrex::Real> h(n_IF + 1);
-        const amrex::Real z = 2.0 * alpha;
-        for (int n = 0; n <= n_IF; ++n)
-        {
-            amrex::Real term = 1.0;
-            for (int p = 1; p <= n; ++p) { term *= (0.5 * z) / amrex::Real(p); }
-            amrex::Real sum = term;
-            for (int k = 0; k < 200; ++k)
-            {
-                term *= (0.25 * z * z) / (amrex::Real(k + 1) * amrex::Real(n + k + 1));
-                sum  += term;
-                if (term < 1.0e-300) { break; }
-            }
-            h[n] = std::exp(-z) * sum;
-        }
-
-        amrex::Real mass = h[0];
-        for (int n = 1; n <= n_IF; ++n) { mass += 2.0 * h[n]; }
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::abs(mass - 1.0) < 1.0e-8,
-            "IF kernel mass far from 1: n_IF too small for this alpha, or bad table");
-
-        if_table[m].resize(n_IF + 1);
-        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, h.begin(), h.end(), if_table[m].begin());
-
-        amrex::Print() << "  IF kernel " << m << ": alpha = " << alpha
-                       << ", n_IF = " << n_IF << ", mass deficit = " << 1.0 - mass << "\n";
-    }
-    amrex::Gpu::streamSynchronize();
+    // cell-centered scratch
+    divU.define(ba_in, dm_in, n_comp, n_ghost);
+    divU.setVal(0.0);
 }
 
 
 // ---------------------------------------------------------------------------
-// 4.  applyIF -- d separable 1D sweeps.  Ping-pongs through IF_buff.
-// ---------------------------------------------------------------------------
-
-void ProjectionWorkspace::applyIF(amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& fld,
-                                  int if_idx)
-{
-    BL_PROFILE("<Compute> applyIF()");
-
-    const auto&        per = stage.getGeom().periodicity();
-    if (if_idx < 0) 
-    {                                  // H = I
-        for (int d = 0; d < AMREX_SPACEDIM; ++d)
-        {
-            fld[d].setBndry(0.0);
-            fld[d].FillBoundary(per);
-        }
-        return;
-    }
-
-    const amrex::Real* tab = if_table[if_idx].dataPtr();
-    const int          n   = n_IF;
-    
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        for (int sd = 0; sd < AMREX_SPACEDIM; ++sd)
-        {
-            fld[idim].setBndry(0.0);
-            fld[idim].FillBoundary(per);
-
-            const int di = (sd == 0), dj = (sd == 1), dk = (sd == 2);
-
-            LGF_NSE_OMP_MFITER
-            for (amrex::MFIter mfi(fld[idim], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
-            {
-                const amrex::Box& bx = mfi.tilebox();
-                auto const& src = fld[idim].const_array(mfi);
-                auto const& dst = IF_buff[idim].array(mfi);
-
-                amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-                {
-                    amrex::Real s = tab[0] * src(i,j,k);
-                    for (int m = 1; m <= n; ++m)
-                    {
-                        s += tab[m] * ( src(i + m*di, j + m*dj, k + m*dk)
-                                      + src(i - m*di, j - m*dj, k - m*dk) );
-                    }
-                    dst(i,j,k) = s;
-                });
-            }
-            std::swap(fld[idim], IF_buff[idim]);      // result back in fld
-        }
-        fld[idim].setBndry(0.0);
-        fld[idim].FillBoundary(per);
-    }
-}
-
-
-// ---------------------------------------------------------------------------
-// 5.  g^i = -a~_{i,i} dt Ntilde(u^{i-1})   ->  slot i
+// g^i = -a~_{i,i} dt Ntilde(u^{i-1})   ->  slot i
 // ---------------------------------------------------------------------------
 
 void ProjectionWorkspace::computeGStage(const FlowField& st, int i, amrex::Real t_stage)
@@ -367,7 +61,7 @@ void ProjectionWorkspace::computeGStage(const FlowField& st, int i, amrex::Real 
 
     const amrex::Geometry& geom = st.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
-    const amrex::Real coef = -aT(i,i) * dt;
+    const amrex::Real coef = -ifherk.aT(i,i) * ifherk.timeStep();
     const auto uinf = freestreamVelocity(t_stage);     // uniform: evaluated once, on the host
 
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -450,7 +144,7 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
 
     divU.FillBoundary(init_state.getGeom().periodicity());
     lgf_poisson_solver.solvePoisson(divU, init_state.getPres(), init_supp_ba);
-    init_state.getPres().mult(1.0 / (aT(1,1) * dt), 0);      // dhat -> d, Eq. (31)
+    init_state.getPres().mult(1.0 / (ifherk.aT(1,1) * ifherk.timeStep()), 0);      // dhat -> d, Eq. (31)
     init_state.getPres().FillBoundary(init_state.getGeom().periodicity());
 
     divU_max_norm                = divU.norm0(0, 0, false);
@@ -460,41 +154,18 @@ void ProjectionWorkspace::initializePresField(FlowField& init_state,
 
 
 // ---------------------------------------------------------------------------
-// 5b. psi^i = psi_k + dt sum_{j<=i} a~_{i,j} L^j,  L^i = L(psi^{i-1}, u^{i-1})
+// advanceTimeStep -- Eqs. (25)-(31) with Eq. (35) for the stage solve
 // ---------------------------------------------------------------------------
 
-void ProjectionWorkspace::advanceInterfaceStage(InterfaceTracker& tracker, int i, amrex::Real t_stage)
-{
-    BL_PROFILE("<Compute> advanceInterfaceStage()");
-
-    // plain explicit RK with the shifted tableau: the velocity and time are the same
-    // u^{i-1} and u_inf(t_stage) that computeGStage feeds to N, and psi^{i-1} is psi_k
-    // itself on the first stage. The right-hand side refills psi^{i-1}'s ghost cells
-    const int nc = psi_stage.nComp();
-    amrex::MultiFab& psi_prev = (i == 1) ? tracker.getPsi() : psi_stage;
-    tracker.computeAdvectionRHS(psi_prev, psi_rhs[i], stage.getVelArr(), freestreamVelocity(t_stage));
-
-    amrex::MultiFab::Copy(psi_stage, psi_k, 0, 0, nc, 0);
-    for (int j = 1; j <= i; ++j)
-    { amrex::MultiFab::Saxpy(psi_stage, dt * aT(i,j), psi_rhs[j], 0, 0, nc, 0); }
-}
-
-
-// ---------------------------------------------------------------------------
-// 6.  advanceTimeStep -- Eqs. (25)-(31) with Eq. (35) for the stage solve
-// ---------------------------------------------------------------------------
-
-void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real dt_in,
-                                          const amrex::BoxArray& supp_ba, amrex::Real time_n,
-                                          InterfaceTracker* tracker)
+void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::BoxArray& supp_ba,
+                                          amrex::Real time_n, InterfaceTracker* tracker)
 {
     BL_PROFILE("<Compute> advanceTimeStep()");
 
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE((tracker != nullptr) == track_interface,
-        "advanceTimeStep: pass the interface tracker exactly when track_interface is on");
+    const int         rk_stages = ifherk.nStages();
+    const amrex::Real dt        = ifherk.timeStep();
 
-    tag_ba = supp_ba;
-    stage  = state_n;                                        // u^0 = u_k
+    stage = state_n;                                         // u^0 = u_k
 
     const amrex::Geometry& geom = state_n.getGeom();
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> invdx = geom.InvCellSizeArray();
@@ -503,27 +174,24 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     for (int d = 0; d < AMREX_SPACEDIM; ++d)                 // q^1 = u_k, Eq. (29)
     { amrex::MultiFab::Copy(q[d], state_n.getVel(d), 0, 0, 1, ng); }
 
-    if (tracker)                                             // psi^0 = psi_k
-    { amrex::MultiFab::Copy(psi_k, tracker->getPsi(), 0, 0, psi_k.nComp(), 0); }
-
     for (int i = 1; i <= rk_stages; ++i)
     {
         // --- g^i into slot i.  Fresh; never aged.  Eq. (28) ----------------
         // u^{i-1} lives at t_n + c~_{i-1} dt (c~_0 = 0): N is evaluated there
-        const amrex::Real t_stage = time_n + ((i == 1) ? 0.0 : cT(i-1)) * dt;
+        const amrex::Real t_stage = time_n + ((i == 1) ? 0.0 : ifherk.cT(i-1)) * dt;
         stage.setBoundary();
         computeGStage(stage, i, t_stage);
-        maskToSupport(w[i], tag_ba);     
+        maskToSupport(w[i], supp_ba);
 
         // --- psi^i from the same u^{i-1}, t_stage.  No IF: psi does not diffuse
-        if (tracker) { advanceInterfaceStage(*tracker, i, t_stage); }
+        if (tracker) { tracker->advanceStage(i, ifherk, stage.getVelArr(), freestreamVelocity(t_stage)); }
 
         // --- age q and w[1..i-1] by H^{i-1}.  Eqs. (29), (30) --------------
         if (i > 1)
         {
-            const int idx = rk_if_idx(i-1);
-            applyIF(q, idx);
-            for (int j = 1; j <= i-1; ++j) { applyIF(w[j], idx); }
+            const int idx = ifherk.ifIdx(i-1);
+            ifherk.applyIF(q, IF_buff, idx);
+            for (int j = 1; j <= i-1; ++j) { ifherk.applyIF(w[j], IF_buff, idx); }
         }
 
         // --- r^i = q^i + dt sum_{j<i} a~_{i,j} w^{i,j} + g^i.  Eq. (27) ----
@@ -531,7 +199,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
         {
             amrex::MultiFab::Copy(r[d], q[d], 0, 0, 1, ng);
             for (int j = 1; j <= i-1; ++j)
-            { amrex::MultiFab::Saxpy(r[d], dt * aT(i,j), w[j][d], 0, 0, 1, ng); }
+            { amrex::MultiFab::Saxpy(r[d], dt * ifherk.aT(i,j), w[j][d], 0, 0, 1, ng); }
             amrex::MultiFab::Saxpy(r[d], 1.0, w[i][d], 0, 0, 1, ng);   // g^i, coeff 1
             r[d].FillBoundary(geom.periodicity());
         }
@@ -549,7 +217,7 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
             { div_arr(i2,j2,k2) = discreteDivergenceF2C(i2,j2,k2, invdx, r_arr); });
         }
         divU.FillBoundary(geom.periodicity());
-        lgf_poisson_solver.solvePoisson(divU, stage.getPres(), tag_ba);
+        lgf_poisson_solver.solvePoisson(divU, stage.getPres(), supp_ba);
         stage.getPres().FillBoundary(geom.periodicity());
 
         // --- rhs_vel = G dhat  (used twice: for u^i and for w^{i,i}) -------
@@ -583,10 +251,10 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
             amrex::MultiFab::Copy (stage.getVel(d), r[d],       0, 0, 1, 0);
             amrex::MultiFab::Saxpy(stage.getVel(d), -1.0, rhs_vel[d], 0, 0, 1, 0);
         }
-        applyIF(stage.getVelArr(), rk_if_idx(i));   // TODO: add getVelArr() to FlowField
+        ifherk.applyIF(stage.getVelArr(), IF_buff, ifherk.ifIdx(i));
 
         // --- w^{i,i} = (g^i - G dhat) / (a~_{i,i} dt).  Eq. (30) -----------
-        const amrex::Real inv = 1.0 / (aT(i,i) * dt);
+        const amrex::Real inv = 1.0 / (ifherk.aT(i,i) * dt);
         for (int d = 0; d < AMREX_SPACEDIM; ++d)
         {
             amrex::MultiFab::Saxpy(w[i][d], -1.0, rhs_vel[d], 0, 0, 1, 0);
@@ -595,17 +263,17 @@ void ProjectionWorkspace::advanceTimeStep(FlowField& state_n, const amrex::Real 
     }
 
     // --- Eq. (31): d_{k+1} = (a~_{s,s} dt)^{-1} dhat^s ---------------------
-    stage.getPres().mult(1.0 / (aT(rk_stages, rk_stages) * dt), 0);
+    stage.getPres().mult(1.0 / (ifherk.aT(rk_stages, rk_stages) * dt), 0);
 
     stage.setBoundary();
     state_n = stage;
 
-    // psi_{k+1} = psi^s, since a~_{s,j} = b_j
-    if (tracker) { amrex::MultiFab::Copy(tracker->getPsi(), psi_stage, 0, 0, psi_stage.nComp(), 0); }
+    // psi_{k+1} = psi^s
+    if (tracker) { tracker->finishStep(); }
 
     divU_max_norm                = divU.norm0(0, 0, false);
     divU_at_end_max_norm         = computeDivUMaxNorm(state_n);
-    divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &tag_ba);
+    divU_at_end_max_norm_support = computeDivUMaxNorm(state_n, &supp_ba);
 }
 
 void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amrex::BoxArray& new_ba, const amrex::DistributionMapping& new_dm)
@@ -614,36 +282,13 @@ void ProjectionWorkspace::regridOnto(const amrex::Geometry& new_geom, const amre
     stage.redefine(new_geom, new_ba, new_dm);
 
     // update all scratch MultiFabs
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        amrex::BoxArray new_ba_face = amrex::convert(new_ba, amrex::IntVect::TheDimensionVector(idim));
-        
-        rhs_vel[idim].define(new_ba_face, new_dm, rhs_vel[idim].nComp(), rhs_vel[idim].nGrow());
+    defineScratch(new_ba, new_dm);
 
-        rhs_vel[idim].setVal(0.0);
-
-        // update other buffers
-        q[idim]      .define(new_ba_face, new_dm, q[idim].nComp(),       q[idim].nGrow());
-        r[idim]      .define(new_ba_face, new_dm, r[idim].nComp(),       r[idim].nGrow());
-        IF_buff[idim].define(new_ba_face, new_dm, IF_buff[idim].nComp(), IF_buff[idim].nGrow());
-        q[idim].setVal(0.0);  r[idim].setVal(0.0);  IF_buff[idim].setVal(0.0);
-
-        for (int j = 1; j <= rk_stages; ++j)
-        {
-            w[j][idim].define(new_ba_face, new_dm, w[j][idim].nComp(), w[j][idim].nGrow());
-            w[j][idim].setVal(0.0);
-        }
-    }
-
-    // reallocate cell-centered arrays
-    divU.define(new_ba, new_dm, divU.nComp(), divU.nGrow());
-    divU.setVal(0.0);
-
-    // reallocate the interface registers (the tracker moves psi itself)
-    if (track_interface) { defineInterfaceRegisters(new_ba, new_dm); }
+    // the integrator keeps its own copy of the geometry (tables are rebuilt only if dx changed)
+    ifherk.setGeometry(new_geom);
 
     // update the Poisson solver
-    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);  
+    lgf_poisson_solver.regridOnto(new_geom, new_ba, new_dm);
 
-    
+    // the interface registers live in InterfaceTracker, which drops them in its own regrid()
 }
