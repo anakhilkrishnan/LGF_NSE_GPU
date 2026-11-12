@@ -25,8 +25,6 @@ Building and running the code requires the following:
 4. Latest GCC
 5. FFTW, for CPU builds (cuFFT used for GPU builds)
 
-AMReX is built along with the solver by default, pre-existing AMReX files can be provided using `-DFETCHCONTENT_SOURCE_DIR_AMREX_CODE=<path-to-'amrex'>` flag in build dir creation step.
-
 To build the executable:
 ```bash
 ## start in the parent directory containing CMakeLists.txt and Src directory
@@ -44,6 +42,8 @@ cmake -B build_gpu -S .. -DAMReX_SPACEDIM=3 -DAMReX_GPU_BACKEND=CUDA
 ## this creates the build dir and NSE_test inside Exec. Complete the build process
 cmake --build <build_dir_name> -j <n_procs>
 ```
+
+AMReX is built along with the solver by default, pre-existing AMReX files can be provided using `-DFETCHCONTENT_SOURCE_DIR_AMREX_CODE=<path-to-'amrex'>` flag in build dir creation step.
 
 To run the executable:
 ```bash
