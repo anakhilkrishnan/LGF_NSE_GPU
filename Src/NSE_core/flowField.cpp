@@ -85,8 +85,17 @@ void FlowField::redefine(const amrex::Geometry& new_geom, const amrex::BoxArray&
 }
 
 // initialization procedure to ensure div(omega_0) = 0 is actually upheld discretely
+//
+// Each face takes a 4x4 Gauss-Legendre average of omega_0 (16 calls of initialVorticity). Only faces that a box owns
+// are evaluated, plus ghost faces that no box covers (outside the grid); the other ghost faces are copied from the
+// neighbouring box by FillBoundary. That is the same number -- the same global index gives the same coordinates and
+// the same quadrature -- so the result is identical to evaluating every ghost face, at a fraction of the cost: a box
+// of b^3 cells with g ghost layers has (1 + 2g/b)^3 times as many faces with ghosts, 27x for the 4^3 boxes of the
+// search grid (max_grid_size 16, search ratio 4, n_ghost 4) and 3.4x for 16^3 boxes.
 void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex::Geometry& geom)
 {
+    BL_PROFILE("<Compute> fluxAverageVorticity()");
+
     const auto dx = geom.CellSizeArray();
     const auto lo = geom.ProbLoArray();
 
@@ -101,35 +110,46 @@ void fluxAverageVorticity(amrex::Array<amrex::MultiFab, N_VORT>& w0, const amrex
         const int dir = (AMREX_SPACEDIM == 2) ? 2 : c;   // physical direction of this component
         const int d1  = (dir + 1) % 3;                   // directions spanning the dual face
         const int d2  = (dir + 2) % 3;                   // (2D: dir = 2, so d1 = 0, d2 = 1)
+        const amrex::BoxArray& bac = w0[c].boxArray();
 
         LGF_NSE_OMP_MFITER
         for (amrex::MFIter mfi(w0[c], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
         {
-            const amrex::Box bx = mfi.growntilebox();    // omega_0 is known everywhere: fill ghosts too
             auto const& a = w0[c].array(mfi);
 
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            // this tile's own faces, and the ghost faces beside it that no box covers (complementIn is
+            // thread-safe: the BoxArray's hash map is built under an OpenMP critical section)
+            amrex::BoxList todo = bac.complementIn(mfi.growntilebox());
+            todo.push_back(mfi.tilebox());
+
+            for (const amrex::Box& bx : todo)
             {
-                // edge centre: nodal in d1, d2; cell-centred in dir (3D). 2D: a node, z = 0.
-                const int ijk[3] = {i, j, k};
-                amrex::GpuArray<amrex::Real, 3> xe = {0.0, 0.0, 0.0};
-                for (int d = 0; d < AMREX_SPACEDIM; ++d) { xe[d] = lo[d] + ijk[d] * dx[d]; }
+                amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    // edge centre: nodal in d1, d2; cell-centred in dir (3D). 2D: a node, z = 0.
+                    const int ijk[3] = {i, j, k};
+                    amrex::GpuArray<amrex::Real, 3> xe = {0.0, 0.0, 0.0};
+                    for (int d = 0; d < AMREX_SPACEDIM; ++d) { xe[d] = lo[d] + ijk[d] * dx[d]; }
 #if AMREX_SPACEDIM == 3
-                xe[dir] += amrex::Real(0.5) * dx[dir];
+                    xe[dir] += amrex::Real(0.5) * dx[dir];
 #endif
-                // average flux of omega_dir through the dual face
-                amrex::Real sum = 0.0;
-                for (int a1 = 0; a1 < 4; ++a1) {
-                    for (int a2 = 0; a2 < 4; ++a2) {
-                        amrex::GpuArray<amrex::Real, 3> xq = xe;
-                        xq[d1] += qx[a1] * dx[d1];
-                        xq[d2] += qx[a2] * dx[d2];
-                        sum += qw[a1] * qw[a2] * initialVorticity(dir, xq[0], xq[1], xq[2]);
+                    // average flux of omega_dir through the dual face
+                    amrex::Real sum = 0.0;
+                    for (int a1 = 0; a1 < 4; ++a1) {
+                        for (int a2 = 0; a2 < 4; ++a2) {
+                            amrex::GpuArray<amrex::Real, 3> xq = xe;
+                            xq[d1] += qx[a1] * dx[d1];
+                            xq[d2] += qx[a2] * dx[d2];
+                            sum += qw[a1] * qw[a2] * initialVorticity(dir, xq[0], xq[1], xq[2]);
+                        }
                     }
-                }
-                a(i,j,k) = sum;
-            });
+                    a(i,j,k) = sum;
+                });
+            }
         }
+
+        // the remaining ghost faces: copies of the neighbouring boxes' own faces
+        w0[c].FillBoundary(geom.periodicity());
     }
 }
 
@@ -352,6 +372,3 @@ amrex::Real computeDivUMaxNorm(const FlowField& input_state, const amrex::BoxArr
     amrex::ParallelDescriptor::ReduceRealMax(max_div);
     return max_div;
 }
-
-    
-

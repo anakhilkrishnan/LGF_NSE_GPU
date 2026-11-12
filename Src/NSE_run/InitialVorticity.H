@@ -78,10 +78,56 @@ RingFrame ringFrame (const GaussianRing& ring) noexcept
 // fp = df/dtheta, at the azimuth (c1, s1) = (cos theta, sin theta) of the ring frame; (A_n, B_n) = (cos phi_n, sin phi_n)
 // with phi_n random from `seed`. The perturbation is a radial displacement of the centreline in the plane of the
 // ring, r = R + varsigma R f(theta).
+//
+// (A_n, B_n) depend only on (seed, n). The GPU recomputes them at every call, which is cheap there. On a CPU they were
+// ~70% of a call near a core (measured: 440 ns per initialVorticity call of the three seeded rings, 137 ns with the
+// coefficients cached), so the host keeps them: a few slots per thread, keyed by seed, filled with the same std::cos
+// and std::sin, hence identical values.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ringModePhase (const GaussianRing& ring, int n) noexcept
+{
+    constexpr amrex::Real twopi = 6.283185307179586;
+    return twopi * archerHashUniform(ring.seed * 2654435761u + static_cast<unsigned int>(n));
+}
+
+#if !AMREX_DEVICE_COMPILE
+struct RingModeCoefficients
+{
+    static constexpr int MAX_MODES = 64;
+    unsigned int seed = 0;
+    int          nmodes = 0;                                    // 0: empty slot
+    amrex::Real  A[MAX_MODES];
+    amrex::Real  B[MAX_MODES];
+};
+
+// this thread's coefficients of the ring's seed, computed on first use; nullptr if nmodes exceeds the table
+inline const RingModeCoefficients* ringModeCoefficients (const GaussianRing& ring) noexcept
+{
+    if (ring.nmodes > RingModeCoefficients::MAX_MODES) { return nullptr; }
+    constexpr unsigned int NSLOT = 8;                           // seeds in use at once (three rings: 3)
+    thread_local RingModeCoefficients slot[NSLOT];
+    RingModeCoefficients& e = slot[ring.seed % NSLOT];
+    if (e.seed != ring.seed || e.nmodes < ring.nmodes)
+    {
+        for (int n = 1; n <= ring.nmodes; ++n)
+        {
+            const amrex::Real phi = ringModePhase(ring, n);
+            e.A[n-1] = std::cos(phi);
+            e.B[n-1] = std::sin(phi);
+        }
+        e.seed = ring.seed;
+        e.nmodes = ring.nmodes;
+    }
+    return &e;
+}
+#endif
+
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void ringModeSum (const GaussianRing& ring, amrex::Real c1, amrex::Real s1, amrex::Real& f, amrex::Real& fp) noexcept
 {
-    constexpr amrex::Real twopi = 6.283185307179586;
+#if !AMREX_DEVICE_COMPILE
+    const RingModeCoefficients* coef = ringModeCoefficients(ring);
+#endif
     amrex::Real cn = 1.0, sn = 0.0;
     f = 0.0; fp = 0.0;
     for (int n = 1; n <= ring.nmodes; ++n)
@@ -89,8 +135,14 @@ void ringModeSum (const GaussianRing& ring, amrex::Real c1, amrex::Real s1, amre
         const amrex::Real cnew = cn*c1 - sn*s1;                 // cos(n theta), sin(n theta) by recurrence
         sn = sn*c1 + cn*s1;
         cn = cnew;
-        const amrex::Real phi = twopi * archerHashUniform(ring.seed * 2654435761u + static_cast<unsigned int>(n));
+#if AMREX_DEVICE_COMPILE
+        const amrex::Real phi = ringModePhase(ring, n);
         const amrex::Real An = std::cos(phi), Bn = std::sin(phi);
+#else
+        amrex::Real An, Bn;
+        if (coef) { An = coef->A[n-1]; Bn = coef->B[n-1]; }
+        else      { const amrex::Real phi = ringModePhase(ring, n); An = std::cos(phi); Bn = std::sin(phi); }
+#endif
         f  += An * sn + Bn * cn;                                // A_n sin(n theta) + B_n cos(n theta)
         fp += n * (An * cn - Bn * sn);                          // d f / d theta
     }
